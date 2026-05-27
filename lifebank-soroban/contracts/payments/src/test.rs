@@ -172,6 +172,23 @@ fn test_create_escrow_rejects_duplicate_request_id() {
 }
 
 #[test]
+fn test_create_escrow_does_not_store_payment_when_transfer_fails() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 0);
+
+    let result = client.try_create_escrow(&7u64, &hospital, &payee, &1_000i128, &token_id);
+    assert!(result.is_err());
+    assert!(client.try_get_payment_by_request(&7u64).is_err());
+    assert!(client.try_get_payment(&1u64).is_err());
+}
+
+#[test]
 fn test_get_payment_by_request_resolves_without_full_scan() {
     // Verify the index lookup returns the correct payment even when many
     // payments exist for other request IDs.

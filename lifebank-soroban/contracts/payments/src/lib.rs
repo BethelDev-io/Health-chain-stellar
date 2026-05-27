@@ -613,10 +613,8 @@ impl PaymentContract {
         }
 
         let token_client = token::Client::new(&env, &token);
-        let available = token_client.balance(&hospital);
-        if available < amount {
-            return Err(Error::InsufficientEscrowFunds);
-        }
+        // Transfer before persisting the escrow payment. If the transfer fails,
+        // the transaction aborts and no payment record is written.
         token_client.transfer(&hospital, &env.current_contract_address(), &amount);
 
         let id = get_counter(&env) + 1;
