@@ -295,6 +295,9 @@ pub enum DataKey {
 
     /// Circuit breaker: contract is paused
     Paused,
+
+    /// Deduplication index: serial number (donation bag ID) -> blood unit ID
+    Serial(String),
 }
 
 /// Reservation record for blood units locked for a specific requester

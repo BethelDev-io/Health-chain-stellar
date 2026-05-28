@@ -1,8 +1,7 @@
 #![no_std]
 use soroban_sdk::token;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
-    Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -123,6 +122,8 @@ pub enum Error {
     NothingToClaim = 510,
     /// A payment already exists for this request.
     DuplicatePayment = 511,
+    /// Donor already has an active vesting schedule that has not been fully claimed.
+    ActiveVestingExists = 517,
     /// The associated request is not in a state that permits payment.
     RequestNotPayable = 512,
     /// The request referenced by this payment does not exist.
@@ -142,8 +143,6 @@ const PLEDGE_COUNTER: soroban_sdk::Symbol = symbol_short!("PLG_CTR");
 const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
 const REWARD_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("RWD_TOK");
-/// Instance-level map: request_id (u64) → payment_id (u64).
-const REQ_IDX: soroban_sdk::Symbol = symbol_short!("REQ_IDX");
 /// Instance-level aggregate stats.
 const STATS_KEY: soroban_sdk::Symbol = symbol_short!("STATS");
 /// Instance storage key for the requests contract address (optional).
@@ -272,14 +271,24 @@ fn index_by_status(env: &Env, status: PaymentStatus, id: u64) {
     env.storage().persistent().set(&key, &ids);
 }
 
+fn req_idx_key(request_id: u64) -> (u64, &'static str) {
+    (request_id, "ri")
+}
+
+/// Store a single request_id → payment_id mapping in persistent storage.
+/// Each entry is independent, preventing unbounded instance-storage growth.
 fn index_by_request(env: &Env, request_id: u64, payment_id: u64) {
-    let mut map: Map<u64, u64> = env
-        .storage()
-        .instance()
-        .get(&REQ_IDX)
-        .unwrap_or(Map::new(env));
-    map.set(request_id, payment_id);
-    env.storage().instance().set(&REQ_IDX, &map);
+    env.storage()
+        .persistent()
+        .set(&req_idx_key(request_id), &payment_id);
+}
+
+/// Remove the request index entry once the payment reaches a terminal state
+/// (Released, Refunded, Cancelled) to avoid retaining stale entries.
+fn remove_from_request_index(env: &Env, request_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&req_idx_key(request_id));
 }
 
 /// Remove `id` from the persistent Vec stored under the given status index key.
@@ -512,12 +521,7 @@ impl PaymentContract {
         payer.require_auth();
 
         // Reject if a payment for this request already exists.
-        let existing_map: Map<u64, u64> = env
-            .storage()
-            .instance()
-            .get(&REQ_IDX)
-            .unwrap_or(Map::new(&env));
-        if existing_map.contains_key(request_id) {
+        if env.storage().persistent().has(&req_idx_key(request_id)) {
             return Err(Error::DuplicatePayment);
         }
 
@@ -598,12 +602,7 @@ impl PaymentContract {
         hospital.require_auth();
 
         // Reject if a payment for this request already exists.
-        let existing_map: Map<u64, u64> = env
-            .storage()
-            .instance()
-            .get(&REQ_IDX)
-            .unwrap_or(Map::new(&env));
-        if existing_map.contains_key(request_id) {
+        if env.storage().persistent().has(&req_idx_key(request_id)) {
             return Err(Error::DuplicatePayment);
         }
 
@@ -685,6 +684,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Released, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Released);
+        remove_from_request_index(&env, payment.request_id);
 
         env.events().publish(
             (symbol_short!("payment"), symbol_short!("released")),
@@ -723,6 +723,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Refunded, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded);
+        remove_from_request_index(&env, payment.request_id);
 
         env.events().publish(
             (symbol_short!("payment"), symbol_short!("refunded")),
@@ -741,6 +742,9 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, status, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, status);
+        if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
+            remove_from_request_index(&env, payment.request_id);
+        }
 
         // Emit event on every status transition so off-chain indexers can stay
         // in sync without polling. Topics: ("payment", "status") so indexers can
@@ -808,12 +812,11 @@ impl PaymentContract {
     }
 
     pub fn get_payment_by_request(env: Env, request_id: u64) -> Result<Payment, Error> {
-        let map: Map<u64, u64> = env
+        let payment_id: u64 = env
             .storage()
-            .instance()
-            .get(&REQ_IDX)
-            .unwrap_or(Map::new(&env));
-        let payment_id = map.get(request_id).ok_or(Error::PaymentNotFound)?;
+            .persistent()
+            .get(&req_idx_key(request_id))
+            .ok_or(Error::PaymentNotFound)?;
         load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)
     }
 
@@ -1008,6 +1011,12 @@ impl PaymentContract {
             return Err(Error::InvalidAmount);
         }
 
+        // Reject if donor already has an active (uncompleted) vesting schedule.
+        // Overwriting it would silently destroy unclaimed rewards.
+        if env.storage().persistent().has(&vesting_key(&donor)) {
+            return Err(Error::ActiveVestingExists);
+        }
+
         let now = env.ledger().timestamp();
         let schedule = VestingSchedule {
             donor: donor.clone(),
@@ -1140,6 +1149,7 @@ impl PaymentContract {
             remove_from_status_index(&env, old_status, pid);
             index_by_status(&env, PaymentStatus::Refunded, pid);
             update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded);
+            remove_from_request_index(&env, payment.request_id);
 
             if let Some(ref rc) = req_contract {
                 try_cancel_request(&env, rc, payment.request_id);

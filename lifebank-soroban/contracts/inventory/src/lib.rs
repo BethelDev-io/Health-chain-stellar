@@ -127,6 +127,7 @@ impl InventoryContract {
     pub fn register_blood(
         env: Env,
         bank_id: Address,
+        serial_number: String,
         blood_type: BloodType,
         quantity_ml: u32,
         donor_id: Option<Address>,
@@ -134,12 +135,13 @@ impl InventoryContract {
         // 1. Verify bank authentication
         bank_id.require_auth();
 
-        Self::register_blood_after_auth(env, bank_id, blood_type, quantity_ml, donor_id)
+        Self::register_blood_after_auth(env, bank_id, serial_number, blood_type, quantity_ml, donor_id)
     }
 
     fn register_blood_after_auth(
         env: Env,
         bank_id: Address,
+        serial_number: String,
         blood_type: BloodType,
         quantity_ml: u32,
         donor_id: Option<Address>,
@@ -154,6 +156,12 @@ impl InventoryContract {
         // Verify bank is authorized
         if !storage::is_authorized_bank(&env, &bank_id) {
             return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
+        // Reject duplicate serial numbers — physical blood bags have unique IDs
+        let serial_key = DataKey::Serial(serial_number.clone());
+        if env.storage().persistent().has(&serial_key) {
+            return Err(ContractError::DuplicateBloodUnit);
         }
 
         // Validate quantity
@@ -209,6 +217,9 @@ impl InventoryContract {
 
         // Store blood unit — only reaches here if the ID slot was empty.
         storage::set_blood_unit(&env, &blood_unit);
+
+        // Persist serial number → unit_id so duplicate registrations are rejected
+        env.storage().persistent().set(&serial_key, &blood_unit_id);
 
         // Update indexes for efficient querying
         storage::add_to_blood_type_index(&env, &blood_unit);
@@ -481,7 +492,7 @@ impl InventoryContract {
     pub fn batch_register_blood(
         env: Env,
         bank_id: Address,
-        entries: Vec<(BloodType, u32, Option<Address>)>,
+        entries: Vec<(String, BloodType, u32, Option<Address>)>,
     ) -> Result<Vec<u64>, ContractError> {
         bank_id.require_auth();
         Self::require_not_paused(&env)?;
@@ -494,16 +505,17 @@ impl InventoryContract {
         }
 
         for i in 0..entries.len() {
-            let (_, quantity_ml, _) = entries.get(i).unwrap();
+            let (_, _, quantity_ml, _) = entries.get(i).unwrap();
             validation::validate_quantity(quantity_ml)?;
         }
 
         let mut ids: Vec<u64> = Vec::new(&env);
         for i in 0..entries.len() {
-            let (blood_type, quantity_ml, donor_id) = entries.get(i).unwrap();
+            let (serial_number, blood_type, quantity_ml, donor_id) = entries.get(i).unwrap();
             let id = Self::register_blood_after_auth(
                 env.clone(),
                 bank_id.clone(),
+                serial_number,
                 blood_type,
                 quantity_ml,
                 donor_id,

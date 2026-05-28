@@ -249,6 +249,70 @@ impl CoordinatorContract {
         Ok(())
     }
 
+    fn require_not_emergency_halted(env: &Env) -> Result<(), CoordinatorError> {
+        if env
+            .storage()
+            .instance()
+            .get(&DataKey::EmergencyHalt)
+            .unwrap_or(false)
+        {
+            return Err(CoordinatorError::EmergencyHalted);
+        }
+        Ok(())
+    }
+
+    /// Emergency halt — immediately blocks all in-flight workflow steps
+    /// (confirm_delivery and settle_payment). Admin only.
+    ///
+    /// Unlike pause(), which prevents new allocations, emergency_halt() is
+    /// designed to contain active incidents (e.g. compromised oracle, critical
+    /// bug) by stopping every in-progress workflow from advancing.
+    /// Call unpause() or a dedicated resume function to restore normal operation.
+    pub fn emergency_halt(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(CoordinatorError::Unauthorized)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::EmergencyHalt, &true);
+        env.events().publish(
+            (
+                symbol_short!("coord"),
+                symbol_short!("emrghlt"),
+                symbol_short!("v1"),
+            ),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Clear the emergency halt flag. Admin only.
+    pub fn clear_emergency_halt(env: Env, admin: Address) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(CoordinatorError::Unauthorized)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::EmergencyHalt, &false);
+        Ok(())
+    }
+
+    /// Returns whether the emergency halt is active.
+    pub fn is_emergency_halted(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::EmergencyHalt)
+            .unwrap_or(false)
+    }
+
     /// Step 1 – Allocate inventory units to a pending request.
     pub fn allocate_units(
         env: Env,
@@ -341,6 +405,7 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_not_emergency_halted(&env)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -395,6 +460,7 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_not_emergency_halted(&env)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 

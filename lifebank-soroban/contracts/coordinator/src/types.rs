@@ -50,4 +50,14 @@ pub enum DataKey {
     PaymentContract,
     Workflow(u64),
     Paused,
+    /// Emergency halt flag — set by emergency_halt(); blocks all in-flight
+    /// workflow steps until manually cleared by admin.
+    EmergencyHalt,
+}
+
+/// Status applied to all in-flight workflows when emergency_halt() is triggered.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkflowHaltedStatus {
+    Halted,
 }
