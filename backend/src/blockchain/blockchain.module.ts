@@ -1,9 +1,10 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
+import { SorobanModule } from '../soroban/soroban.module';
 
 import { BlockchainController } from './controllers/blockchain.controller';
 import { DlqReplayAuditEntity } from './entities/dlq-replay-audit.entity';
@@ -29,12 +30,19 @@ import { SorobanService } from './services/soroban.service';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET', 'default-secret'),
-        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h') },
+        signOptions: {
+          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '1h'),
+        },
       }),
     }),
     CompensationModule,
+    forwardRef(() => SorobanModule),
     EventEmitterModule.forRoot(),
-    TypeOrmModule.forFeature([DlqReplayAuditEntity, FailedSorobanTxEntity, OnChainTxStateEntity]),
+    TypeOrmModule.forFeature([
+      DlqReplayAuditEntity,
+      FailedSorobanTxEntity,
+      OnChainTxStateEntity,
+    ]),
     BullModule.registerQueueAsync(
       {
         name: 'soroban-tx-queue',

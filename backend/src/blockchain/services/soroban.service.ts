@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -11,8 +11,13 @@ import {
   TxFinalEvent,
   TxPendingEvent,
 } from '../../events/blockchain-tx.events';
+import { SorobanService as SorobanRpcService } from '../../soroban/soroban.service';
 import { normalizeContractMethod } from '../contracts/lifebank-contracts';
-import { OnChainTxStateEntity, OnChainTxStatus, TX_EVENT_BIT } from '../entities/on-chain-tx-state.entity';
+import {
+  OnChainTxStateEntity,
+  OnChainTxStatus,
+  TX_EVENT_BIT,
+} from '../entities/on-chain-tx-state.entity';
 import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import {
   SorobanTxJob,
@@ -43,6 +48,8 @@ export class SorobanService {
     private eventEmitter: EventEmitter2,
     @InjectRepository(OnChainTxStateEntity)
     private txStateRepo: Repository<OnChainTxStateEntity>,
+    @Inject(forwardRef(() => SorobanRpcService))
+    private sorobanRpcService: SorobanRpcService,
   ) {}
 
   /**
@@ -104,19 +111,25 @@ export class SorobanService {
   }
 
   /**
-   * Get organization verification status from Soroban
-   * Delegates to the soroban module service which owns the RPC connection.
-   * This method is intentionally thin – it exists so blockchain-module
-   * consumers can call it without importing the soroban module directly.
+   * Get organization verification status from Soroban.
+   * Delegates to the soroban module service which owns the RPC connection
+   * and Redis cache. Returns null when no contract is configured or the
+   * organization is not found on-chain.
    */
-  async getOrganizationVerificationStatus(
-    organizationId: string,
-  ): Promise<{ verified: boolean; verifiedAt?: number } | null> {
-    this.logger.debug(`Querying verification status for org: ${organizationId}`);
-    // Actual RPC call is implemented in soroban/soroban.service.ts
-    // This service is in the blockchain module and does not have direct RPC access.
-    // Callers in the organizations module use soroban/soroban.service.ts directly.
-    return null;
+  async getOrganizationVerificationStatus(organizationId: string): Promise<{
+    verified: boolean;
+    verifiedAt?: number;
+    verifiedBy?: string;
+    revokedAt?: number;
+    revocationReason?: string;
+    orgId: string;
+  } | null> {
+    this.logger.debug(
+      `Querying verification status for org: ${organizationId}`,
+    );
+    return this.sorobanRpcService.getOrganizationVerificationStatus(
+      organizationId,
+    );
   }
 
   /**
@@ -319,10 +332,11 @@ export class SorobanService {
     }
 
     // status === 'confirmed'
-    const confirmationState = await this.confirmationService.recordConfirmations(
-      callback.transactionHash,
-      callback.confirmations ?? 1,
-    );
+    const confirmationState =
+      await this.confirmationService.recordConfirmations(
+        callback.transactionHash,
+        callback.confirmations ?? 1,
+      );
 
     txState.confirmations = confirmationState.confirmations;
 
