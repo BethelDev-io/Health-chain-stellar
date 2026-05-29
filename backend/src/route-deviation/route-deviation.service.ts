@@ -17,6 +17,7 @@ import {
   DeviationStatus,
   RouteDeviationIncidentEntity,
 } from './entities/route-deviation-incident.entity';
+import { PaginatedResponse } from '../common/interfaces/paginated-response.interface';
 
 /** Decode a Google-encoded polyline into lat/lng pairs. */
 function decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
@@ -382,11 +383,29 @@ export class RouteDeviationService {
     return this.incidentRepo.save(incident);
   }
 
-  async findOpenIncidents(): Promise<RouteDeviationIncidentEntity[]> {
-    return this.incidentRepo.find({
+  async findOpenIncidents(
+    page = 1,
+    pageSize = 20,
+  ): Promise<PaginatedResponse<RouteDeviationIncidentEntity>> {
+    const take = Math.min(Math.max(pageSize, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+
+    const [data, total] = await this.incidentRepo.findAndCount({
       where: { status: DeviationStatus.OPEN },
       order: { createdAt: 'DESC' },
+      take,
+      skip,
     });
+
+    return {
+      data,
+      meta: {
+        total,
+        page: Math.max(page, 1),
+        pageSize: take,
+        totalPages: Math.ceil(total / take),
+      },
+    };
   }
 
   async findIncidentsByOrder(
