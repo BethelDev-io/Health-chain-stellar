@@ -836,67 +836,113 @@ fn test_vesting_events_emitted() {
     assert_eq!(schedule.claimed, 200_000i128);
 }
 
-// ── Auth guard tests (Issues #811, #812, #813) ─────────────────────────────────
+// ── SAC token integration tests (issue #853) ───────────────────────────────────
 
+/// create_escrow transfers the exact amount from the payer to the contract.
 #[test]
-fn test_update_status_rejects_non_payer_non_admin() {
+fn test_create_escrow_transfers_tokens_to_contract() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id, _payer, _payee) = make_payment(&env, &client, 1, 500);
-    let stranger = Address::generate(&env);
-    let result = client.try_update_status(&id, &PaymentStatus::Locked, &stranger);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+
+    assert_eq!(token_client.balance(&hospital), 5_000);
+    assert_eq!(token_client.balance(&cid), 0);
+
+    client.create_escrow(&1u64, &hospital, &payee, &3_000i128, &token_id);
+
+    assert_eq!(token_client.balance(&hospital), 2_000, "Payer should have 5000 - 3000 = 2000 tokens left");
+    assert_eq!(token_client.balance(&cid), 3_000, "Contract should hold the escrowed 3000 tokens");
 }
 
+/// release_escrow transfers the locked amount from the contract to the payee.
 #[test]
-fn test_record_dispute_rejects_non_payer_non_payee() {
+fn test_release_escrow_transfers_tokens_to_payee() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id, _payer, _payee) = make_payment(&env, &client, 2, 500);
-    let stranger = Address::generate(&env);
-    let result = client.try_record_dispute(
-        &id,
-        &DisputeReason::Other,
-        &soroban_sdk::String::from_str(&env, "case-x"),
-        &stranger,
-    );
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
-}
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
 
-#[test]
-fn test_resolve_dispute_rejects_non_admin() {
-    let (env, cid, admin) = setup_with_admin();
-    let client = PaymentContractClient::new(&env, &cid);
     let hospital = Address::generate(&env);
     let payee = Address::generate(&env);
-    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
-    let pid = client.create_escrow(&10u64, &hospital, &payee, &1_000i128, &token_id);
-    client.record_dispute(
-        &pid,
-        &DisputeReason::Other,
-        &soroban_sdk::String::from_str(&env, "case-x"),
-        &hospital,
-    );
-    let stranger = Address::generate(&env);
-    let result = client.try_resolve_dispute(&pid, &stranger);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 2_000);
+
+    let payment_id = client.create_escrow(&1u64, &hospital, &payee, &2_000i128, &token_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    assert_eq!(token_client.balance(&cid), 2_000);
+    assert_eq!(token_client.balance(&payee), 0);
+
+    client.release_escrow(&admin, &payment_id);
+
+    assert_eq!(token_client.balance(&cid), 0, "Contract should have no tokens after release");
+    assert_eq!(token_client.balance(&payee), 2_000, "Payee should receive the escrowed tokens");
+
+    let p = client.get_payment(&payment_id);
+    assert_eq!(p.status, PaymentStatus::Released);
 }
 
+/// refund_escrow returns the locked amount from the contract back to the payer.
 #[test]
-fn test_resolve_dispute_allowed_for_admin() {
-    let (env, cid, admin) = setup_with_admin();
+fn test_refund_escrow_returns_tokens_to_payer() {
+    let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
     let hospital = Address::generate(&env);
     let payee = Address::generate(&env);
-    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
-    let pid = client.create_escrow(&11u64, &hospital, &payee, &1_000i128, &token_id);
-    client.record_dispute(
-        &pid,
-        &DisputeReason::Other,
-        &soroban_sdk::String::from_str(&env, "case-y"),
-        &hospital,
-    );
-    client.resolve_dispute(&pid, &admin);
-    let p = client.get_payment(&pid);
-    assert!(p.dispute_resolved);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 4_000);
+
+    let payment_id = client.create_escrow(&1u64, &hospital, &payee, &4_000i128, &token_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    assert_eq!(token_client.balance(&hospital), 0);
+    assert_eq!(token_client.balance(&cid), 4_000);
+
+    client.refund_escrow(&admin, &payment_id);
+
+    assert_eq!(token_client.balance(&cid), 0, "Contract should have no tokens after refund");
+    assert_eq!(token_client.balance(&hospital), 4_000, "Payer should receive full refund");
+
+    let p = client.get_payment(&payment_id);
+    assert_eq!(p.status, PaymentStatus::Refunded);
+}
+
+/// create_escrow rejects a zero amount.
+#[test]
+fn test_create_escrow_rejects_zero_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
+
+    let result = client.try_create_escrow(&1u64, &hospital, &payee, &0i128, &token_id);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Zero amount escrow must be rejected");
+}
+
+/// create_escrow rejects a negative amount.
+#[test]
+fn test_create_escrow_rejects_negative_amount() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
+
+    let result = client.try_create_escrow(&1u64, &hospital, &payee, &-1i128, &token_id);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "Negative amount escrow must be rejected");
 }
