@@ -11,7 +11,10 @@ use crate::types::{DataKey, ExcursionSummary, TemperatureReading, TemperatureSum
 use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, Env, Vec};
 
 const PAGE_SIZE: u32 = 20;
-const GOVERNANCE_DELAY_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
+/// TTL constants for persistent oracle approval entries (in ledgers; ~5 s each).
+/// Entries are bumped whenever their remaining TTL falls below the threshold.
+const ORACLE_BUMP_THRESHOLD: u32 = 518_400; // ~30 days
+const ORACLE_BUMP_TO: u32 = 1_036_800;      // ~60 days
 
 #[contract]
 pub struct TemperatureContract;
@@ -217,11 +220,36 @@ impl TemperatureContract {
 
     pub fn log_reading(
         env: Env,
+        oracle: Address,
         unit_id: u64,
         temperature_celsius_x100: i32,
         timestamp: u64,
     ) -> Result<(), ContractError> {
+        oracle.require_auth();
         Self::require_not_paused(&env)?;
+
+        // Gate: caller must be admin or a whitelisted oracle.
+        let stored_admin = storage::get_admin(&env);
+        let is_admin = oracle == stored_admin;
+        let is_approved: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleApproved(oracle.clone()))
+            .unwrap_or(false);
+
+        if !is_admin && !is_approved {
+            return Err(ContractError::OracleNotWhitelisted);
+        }
+
+        // Bump the oracle entry TTL on every successful read so active oracles
+        // never expire while they are still submitting readings.
+        if is_approved {
+            let key = DataKey::OracleApproved(oracle.clone());
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+        }
+
         let threshold =
             storage::get_threshold(&env, unit_id).ok_or(ContractError::ThresholdNotFound)?;
 
@@ -502,7 +530,16 @@ impl TemperatureContract {
         Ok(())
     }
 
-    /// Whitelist an IoT oracle address that may call report_excursion_to_coordinator.
+    /// Whitelist an IoT oracle address that may call log_reading and
+    /// report_excursion_to_coordinator.
+    ///
+    /// Each oracle is stored as an independent persistent() entry:
+    ///   `DataKey::OracleApproved(oracle_address)` → `bool`
+    ///
+    /// This design scales to an unlimited number of IoT sensor addresses
+    /// (one per blood transport vehicle, cold-storage unit, or field sensor)
+    /// without growing instance storage or impacting unrelated contract calls.
+    /// Membership checks are O(1) regardless of whitelist size.
     pub fn add_oracle(
         env: Env,
         admin: Address,
@@ -513,10 +550,64 @@ impl TemperatureContract {
         if admin != stored_admin {
             return Err(ContractError::Unauthorized);
         }
+        let key = DataKey::OracleApproved(oracle.clone());
+        env.storage().persistent().set(&key, &true);
         env.storage()
             .persistent()
-            .set(&DataKey::OracleWhitelist(oracle), &true);
+            .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("oracle"),),
+            (soroban_sdk::symbol_short!("added"), oracle),
+        );
         Ok(())
+    }
+
+    /// Remove an IoT oracle from the whitelist, preventing it from submitting
+    /// further temperature readings or excursion reports.
+    ///
+    /// Use this for oracle rotation (replacing a compromised sensor) or
+    /// temporary suspension (taking a sensor offline for maintenance).
+    ///
+    /// # Arguments
+    /// * `admin`  - Admin address performing the removal
+    /// * `oracle` - Oracle address to de-whitelist
+    ///
+    /// # Errors
+    /// - `Unauthorized` - Caller is not the admin
+    pub fn remove_oracle(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        let key = DataKey::OracleApproved(oracle.clone());
+        env.storage().persistent().remove(&key);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("oracle"),),
+            (soroban_sdk::symbol_short!("removed"), oracle),
+        );
+        Ok(())
+    }
+
+    /// Check whether an address is currently an approved oracle.
+    ///
+    /// Returns `true` if the address has been added via `add_oracle` and not
+    /// subsequently removed. The admin address always passes this check.
+    ///
+    /// O(1) — reads a single persistent() entry regardless of whitelist size.
+    pub fn is_oracle(env: Env, address: Address) -> bool {
+        let stored_admin = storage::get_admin(&env);
+        if address == stored_admin {
+            return true;
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleApproved(address))
+            .unwrap_or(false)
     }
 
     /// Report a sustained temperature excursion to the coordinator contract,
@@ -550,7 +641,7 @@ impl TemperatureContract {
         let is_oracle: bool = env
             .storage()
             .persistent()
-            .get(&DataKey::OracleWhitelist(caller.clone()))
+            .get(&DataKey::OracleApproved(caller.clone()))
             .unwrap_or(false);
 
         if !is_admin && !is_oracle {
@@ -607,7 +698,7 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
 
-    fn create_test_contract<'a>() -> (Env, Address, TemperatureContractClient<'a>) {
+    fn create_test_contract<'a>() -> (Env, Address, Address, TemperatureContractClient<'a>) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -617,12 +708,18 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        (env, admin, client)
+        // Register a default oracle for use in tests.
+        // All tests use mock_all_auths() so the oracle address just needs to
+        // be passed through — no real signing is required in the test environment.
+        let oracle = Address::generate(&env);
+        client.add_oracle(&admin, &oracle);
+
+        (env, admin, oracle, client)
     }
 
     #[test]
     fn test_zero_padded_entries_not_returned_as_violations() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 42u64;
         // Set threshold: min = 200 (2.00°C), max = 600 (6.00°C)
@@ -632,7 +729,7 @@ mod tests {
         for i in 0..21u64 {
             let temp = 400 + (i % 3) as i32; // Vary between 400-402 (all within range)
             let timestamp = 1000 + i;
-            client.log_reading(&unit_id, &temp, &timestamp);
+            client.log_reading(&oracle, &unit_id, &temp, &timestamp);
         }
 
         // Get violations
@@ -644,7 +741,7 @@ mod tests {
 
     #[test]
     fn test_page_size_plus_one_with_violation_in_second_page() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 43u64;
         // Set threshold: min = 200 (2.00°C), max = 600 (6.00°C)
@@ -655,11 +752,11 @@ mod tests {
         for i in 0..20u64 {
             let temp = 400 + (i % 3) as i32; // Within 200-600 range
             let timestamp = 1000 + i;
-            client.log_reading(&unit_id, &temp, &timestamp);
+            client.log_reading(&oracle, &unit_id, &temp, &timestamp);
         }
 
         // 21st reading: a violation (too cold)
-        client.log_reading(&unit_id, &100, &1020);
+        client.log_reading(&oracle, &unit_id, &100, &1020);
 
         // Get violations
         let violations = client.get_violations(&unit_id, &0u32, &100u32);
@@ -671,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_multiple_pages_correct_violation_count() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 44u64;
         // Set threshold: min = 200, max = 600
@@ -688,7 +785,7 @@ mod tests {
                 400 // Within range
             };
             let timestamp = 1000 + i;
-            client.log_reading(&unit_id, &temp, &timestamp);
+            client.log_reading(&oracle, &unit_id, &temp, &timestamp);
         }
 
         // Get violations
@@ -719,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_get_all_readings_ignores_padding() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 45u64;
         // Set threshold: min = 200, max = 600
@@ -729,7 +826,7 @@ mod tests {
         for i in 0..21u64 {
             let temp = 400 + (i % 3) as i32;
             let timestamp = 1000 + i;
-            client.log_reading(&unit_id, &temp, &timestamp);
+            client.log_reading(&oracle, &unit_id, &temp, &timestamp);
         }
 
         // Get all readings
@@ -754,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_threshold_violation_detection_with_zero_temp() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 46u64;
         // Set threshold: min = 200, max = 600
@@ -764,7 +861,7 @@ mod tests {
         for i in 0..21u64 {
             let temp = 400;
             let timestamp = 1000 + i;
-            client.log_reading(&unit_id, &temp, &timestamp);
+            client.log_reading(&oracle, &unit_id, &temp, &timestamp);
         }
 
         // Verify the second page still exists but has no padding pollution
@@ -782,7 +879,7 @@ mod tests {
 
     #[test]
     fn test_temperature_summary_basic() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 100u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
@@ -791,7 +888,7 @@ mod tests {
         // Average should be 450°C
         for i in 0..10u64 {
             let temp = if i < 5 { 400 } else { 500 };
-            client.log_reading(&unit_id, &temp, &(1000 + i));
+            client.log_reading(&oracle, &unit_id, &temp, &(1000 + i));
         }
 
         let summary = client.get_temperature_summary(&unit_id);
@@ -804,16 +901,16 @@ mod tests {
 
     #[test]
     fn test_temperature_summary_with_violations() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 101u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log readings with some violations
-        client.log_reading(&unit_id, &100, &1000); // violation (too cold)
-        client.log_reading(&unit_id, &400, &1001); // ok
-        client.log_reading(&unit_id, &700, &1002); // violation (too hot)
-        client.log_reading(&unit_id, &500, &1003); // ok
+        client.log_reading(&oracle, &unit_id, &100, &1000); // violation (too cold)
+        client.log_reading(&oracle, &unit_id, &400, &1001); // ok
+        client.log_reading(&oracle, &unit_id, &700, &1002); // violation (too hot)
+        client.log_reading(&oracle, &unit_id, &500, &1003); // ok
 
         let summary = client.get_temperature_summary(&unit_id);
         assert_eq!(summary.count, 4);
@@ -825,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_temperature_summary_large_dataset_no_overflow() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 102u64;
         client.set_threshold(&admin, &unit_id, &0, &60_000_000);
@@ -836,7 +933,7 @@ mod tests {
         let num_readings = 100u64;
 
         for i in 0..num_readings {
-            client.log_reading(&unit_id, &test_temp, &(1000 + i));
+            client.log_reading(&oracle, &unit_id, &test_temp, &(1000 + i));
         }
 
         let summary = client.get_temperature_summary(&unit_id);
@@ -861,15 +958,15 @@ mod tests {
 
     #[test]
     fn test_temperature_summary_extreme_values() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 103u64;
         client.set_threshold(&admin, &unit_id, &-5000, &5000);
 
         // Test with extreme temperature values
-        client.log_reading(&unit_id, &-4000, &1000);
-        client.log_reading(&unit_id, &4000, &1001);
-        client.log_reading(&unit_id, &0, &1002);
+        client.log_reading(&oracle, &unit_id, &-4000, &1000);
+        client.log_reading(&oracle, &unit_id, &4000, &1001);
+        client.log_reading(&oracle, &unit_id, &0, &1002);
 
         let summary = client.get_temperature_summary(&unit_id);
         assert_eq!(summary.count, 3);
@@ -880,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_temperature_summary_multiple_pages() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 104u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
@@ -889,7 +986,7 @@ mod tests {
         // This will span 5 pages
         for i in 0..100u64 {
             let temp = 300 + (i % 10) as i32; // Vary between 300-309
-            client.log_reading(&unit_id, &temp, &(1000 + i));
+            client.log_reading(&oracle, &unit_id, &temp, &(1000 + i));
         }
 
         let summary = client.get_temperature_summary(&unit_id);
@@ -905,7 +1002,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #601)")]
     fn test_temperature_summary_no_readings() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, _oracle, client) = create_test_contract();
 
         let unit_id = 105u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
@@ -922,28 +1019,28 @@ mod tests {
     /// 2 violations → 1 normal → 2 violations → assert streak is 2 (not 4) and unit is not Compromised
     #[test]
     fn test_streak_reset_on_non_violation() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 200u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log 2 violations
-        client.log_reading(&unit_id, &100, &1000); // violation 1
-        client.log_reading(&unit_id, &100, &1001); // violation 2
+        client.log_reading(&oracle, &unit_id, &100, &1000); // violation 1
+        client.log_reading(&oracle, &unit_id, &100, &1001); // violation 2
 
         // Check streak is 2
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
         assert!(!client.is_compromised(&unit_id));
 
         // Log 1 normal reading (resets streak)
-        client.log_reading(&unit_id, &400, &1002); // normal
+        client.log_reading(&oracle, &unit_id, &400, &1002); // normal
 
         // Check streak was reset to 0
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 0);
 
         // Log 2 more violations
-        client.log_reading(&unit_id, &100, &1003); // violation 1
-        client.log_reading(&unit_id, &100, &1004); // violation 2
+        client.log_reading(&oracle, &unit_id, &100, &1003); // violation 1
+        client.log_reading(&oracle, &unit_id, &100, &1004); // violation 2
 
         // Streak should be 2, not 4 (it was reset)
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
@@ -953,21 +1050,21 @@ mod tests {
     /// Test 2: Exact threshold - exactly 3 consecutive violations → assert Compromised triggered
     #[test]
     fn test_exact_threshold_triggers_compromised() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 201u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log exactly 3 consecutive violations
-        client.log_reading(&unit_id, &100, &1000); // violation 1
+        client.log_reading(&oracle, &unit_id, &100, &1000); // violation 1
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 1);
         assert!(!client.is_compromised(&unit_id));
 
-        client.log_reading(&unit_id, &100, &1001); // violation 2
+        client.log_reading(&oracle, &unit_id, &100, &1001); // violation 2
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
         assert!(!client.is_compromised(&unit_id));
 
-        client.log_reading(&unit_id, &100, &1002); // violation 3
+        client.log_reading(&oracle, &unit_id, &100, &1002); // violation 3
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 3);
         assert!(client.is_compromised(&unit_id), "Unit should be compromised after 3 consecutive violations");
     }
@@ -976,23 +1073,23 @@ mod tests {
     /// 2 consecutive → 1 normal → 2 consecutive → assert not Compromised
     #[test]
     fn test_threshold_not_met_not_compromised() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 202u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log 2 consecutive violations
-        client.log_reading(&unit_id, &100, &1000);
-        client.log_reading(&unit_id, &100, &1001);
+        client.log_reading(&oracle, &unit_id, &100, &1000);
+        client.log_reading(&oracle, &unit_id, &100, &1001);
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
 
         // Log 1 normal reading
-        client.log_reading(&unit_id, &400, &1002);
+        client.log_reading(&oracle, &unit_id, &400, &1002);
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 0);
 
         // Log 2 more consecutive violations
-        client.log_reading(&unit_id, &100, &1003);
-        client.log_reading(&unit_id, &100, &1004);
+        client.log_reading(&oracle, &unit_id, &100, &1003);
+        client.log_reading(&oracle, &unit_id, &100, &1004);
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
 
         // Should NOT be compromised
@@ -1003,15 +1100,15 @@ mod tests {
     /// unit is Compromised → admin resets → 2 new violations → assert not Compromised again yet
     #[test]
     fn test_streak_after_recovery() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 203u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Trigger compromised status with 3 violations
-        client.log_reading(&unit_id, &100, &1000);
-        client.log_reading(&unit_id, &100, &1001);
-        client.log_reading(&unit_id, &100, &1002);
+        client.log_reading(&oracle, &unit_id, &100, &1000);
+        client.log_reading(&oracle, &unit_id, &100, &1001);
+        client.log_reading(&oracle, &unit_id, &100, &1002);
         assert!(client.is_compromised(&unit_id));
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 3);
 
@@ -1021,8 +1118,8 @@ mod tests {
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 0, "Streak should be reset to 0");
 
         // Log 2 new violations
-        client.log_reading(&unit_id, &100, &1003);
-        client.log_reading(&unit_id, &100, &1004);
+        client.log_reading(&oracle, &unit_id, &100, &1003);
+        client.log_reading(&oracle, &unit_id, &100, &1004);
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
 
         // Should NOT be compromised again yet (only 2 violations)
@@ -1033,13 +1130,13 @@ mod tests {
     /// 1 violation → assert streak is 1, not Compromised
     #[test]
     fn test_single_reading_unit() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 204u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log single violation
-        client.log_reading(&unit_id, &100, &1000);
+        client.log_reading(&oracle, &unit_id, &100, &1000);
 
         // Check streak is 1
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 1, "Streak should be 1 after single violation");
@@ -1056,26 +1153,26 @@ mod tests {
     /// any authorized party can log temperature readings, and the streak counter persists.
     #[test]
     fn test_interleaved_violations_across_custody_transfers() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 205u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Custodian A logs violations (e.g., during initial storage)
-        client.log_reading(&unit_id, &100, &1000); // violation 1
-        client.log_reading(&unit_id, &100, &1001); // violation 2
+        client.log_reading(&oracle, &unit_id, &100, &1000); // violation 1
+        client.log_reading(&oracle, &unit_id, &100, &1001); // violation 2
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 2);
 
         // Simulate custody transfer (conceptually - same unit, different handler)
         // Custodian B logs a violation (e.g., during transport)
-        client.log_reading(&unit_id, &700, &1002); // violation 3 (too hot)
+        client.log_reading(&oracle, &unit_id, &700, &1002); // violation 3 (too hot)
         
         // Streak should be continuous across the conceptual custody change
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 3);
         assert!(client.is_compromised(&unit_id), "Unit should be compromised - violations span custody transfer");
 
         // Custodian B logs a normal reading
-        client.log_reading(&unit_id, &400, &1003); // normal
+        client.log_reading(&oracle, &unit_id, &400, &1003); // normal
         
         // Streak should reset even after custody transfer
         assert_eq!(client.get_consecutive_violation_streak(&unit_id), 0);
@@ -1089,14 +1186,14 @@ mod tests {
     /// 100 consecutive violations → assert Compromised triggered on the 3rd and streak value is 100 at end
     #[test]
     fn test_large_streak() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 206u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log 100 consecutive violations
         for i in 0..100u64 {
-            client.log_reading(&unit_id, &100, &(1000 + i));
+            client.log_reading(&oracle, &unit_id, &100, &(1000 + i));
             
             // Check that compromised was triggered on the 3rd violation
             if i == 2 {
@@ -1115,23 +1212,23 @@ mod tests {
 
     #[test]
     fn test_temperature_pause_blocks_log_reading() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
         let unit_id = 1u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         client.pause(&admin);
         assert!(client.is_paused());
 
-        let result = client.try_log_reading(&unit_id, &400, &1000u64);
+        let result = client.try_log_reading(&oracle, &unit_id, &400, &1000u64);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_temperature_pause_allows_get_readings() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
         let unit_id = 2u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
-        client.log_reading(&unit_id, &400, &1000u64);
+        client.log_reading(&oracle, &unit_id, &400, &1000u64);
 
         client.pause(&admin);
 
@@ -1142,7 +1239,7 @@ mod tests {
 
     #[test]
     fn test_temperature_unpause_restores_writes() {
-        let (_env, admin, client) = create_test_contract();
+        let (_env, admin, oracle, client) = create_test_contract();
         let unit_id = 3u64;
         client.set_threshold(&admin, &unit_id, &200, &600);
 
@@ -1150,7 +1247,7 @@ mod tests {
         client.unpause(&admin);
         assert!(!client.is_paused());
 
-        client.log_reading(&unit_id, &400, &2000u64);
+        client.log_reading(&oracle, &unit_id, &400, &2000u64);
         let readings = client.get_readings(&unit_id);
         assert!(!readings.is_empty());
     }
@@ -1158,8 +1255,105 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_temperature_non_admin_cannot_pause() {
-        let (env, _admin, client) = create_test_contract();
+        let (env, _admin, _oracle, client) = create_test_contract();
         let attacker = Address::generate(&env);
         client.pause(&attacker);
+    }
+
+    // ── Oracle whitelist tests ────────────────────────────────────────────────
+
+    /// Non-whitelisted address cannot submit temperature readings.
+    #[test]
+    fn test_non_oracle_cannot_log_reading() {
+        let (env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 300u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        let stranger = Address::generate(&env);
+        let result = client.try_log_reading(&stranger, &unit_id, &400, &1000u64);
+        assert!(result.is_err(), "Non-whitelisted address should not be able to log readings");
+    }
+
+    /// Admin can always log readings without being explicitly whitelisted.
+    #[test]
+    fn test_admin_can_log_reading_without_whitelist() {
+        let (_env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 301u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        // Admin is not in the oracle whitelist but should still be able to log
+        client.log_reading(&admin, &unit_id, &400, &1000u64);
+        let readings = client.get_readings(&unit_id);
+        assert_eq!(readings.len(), 1);
+    }
+
+    /// Removed oracle can no longer submit readings.
+    #[test]
+    fn test_removed_oracle_cannot_log_reading() {
+        let (env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 302u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        // Add a new oracle
+        let sensor = Address::generate(&env);
+        client.add_oracle(&admin, &sensor);
+
+        // Confirm it can log
+        client.log_reading(&sensor, &unit_id, &400, &1000u64);
+
+        // Remove the oracle
+        client.remove_oracle(&admin, &sensor);
+
+        // Now it should be rejected
+        let result = client.try_log_reading(&sensor, &unit_id, &400, &2000u64);
+        assert!(result.is_err(), "Removed oracle should not be able to log readings");
+    }
+
+    /// is_oracle returns correct values for whitelisted, removed, and unknown addresses.
+    #[test]
+    fn test_is_oracle_reflects_whitelist_state() {
+        let (env, admin, oracle, client) = create_test_contract();
+
+        // The oracle created in create_test_contract should be approved
+        assert!(client.is_oracle(&oracle), "Registered oracle should return true");
+
+        // A random address should not be an oracle
+        let stranger = Address::generate(&env);
+        assert!(!client.is_oracle(&stranger), "Unknown address should return false");
+
+        // Admin always counts as oracle
+        assert!(client.is_oracle(&admin), "Admin should always return true");
+
+        // After removal, is_oracle returns false
+        client.remove_oracle(&admin, &oracle);
+        assert!(!client.is_oracle(&oracle), "Removed oracle should return false");
+    }
+
+    /// Multiple independent oracles can be added and each works independently.
+    #[test]
+    fn test_multiple_oracles_independent() {
+        let (env, admin, _oracle, client) = create_test_contract();
+        let unit_id = 303u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        let sensor_a = Address::generate(&env);
+        let sensor_b = Address::generate(&env);
+        client.add_oracle(&admin, &sensor_a);
+        client.add_oracle(&admin, &sensor_b);
+
+        // Both can log
+        client.log_reading(&sensor_a, &unit_id, &400, &1000u64);
+        client.log_reading(&sensor_b, &unit_id, &410, &1001u64);
+
+        // Remove only sensor_a
+        client.remove_oracle(&admin, &sensor_a);
+
+        // sensor_b still works, sensor_a does not
+        let result_a = client.try_log_reading(&sensor_a, &unit_id, &400, &2000u64);
+        assert!(result_a.is_err(), "Removed sensor_a should be rejected");
+
+        client.log_reading(&sensor_b, &unit_id, &420, &2001u64);
+        let readings = client.get_readings(&unit_id);
+        assert_eq!(readings.len(), 3, "Should have 3 readings total");
     }
 }

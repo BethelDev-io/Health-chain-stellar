@@ -16,4 +16,6 @@ pub enum ContractError {
     CoordinatorNotSet = 606,
     /// Cross-contract call to coordinator failed
     CoordinatorCallFailed = 607,
+    /// Caller is not a whitelisted oracle
+    OracleNotWhitelisted = 608,
 }

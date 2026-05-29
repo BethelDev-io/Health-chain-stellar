@@ -76,6 +76,14 @@ pub enum DataKey {
     Paused,
     /// Address of the coordinator contract for cross-contract dispute escalation
     CoordinatorContract,
-    /// Whitelisted IoT oracle addresses allowed to report excursions
-    OracleWhitelist(soroban_sdk::Address),
+    /// Per-oracle approval flag stored in persistent() storage.
+    ///
+    /// Key: `OracleApproved(oracle_address)` → `bool`
+    ///
+    /// Using individual persistent keys instead of a Vec in instance() storage
+    /// means the whitelist scales to an unlimited number of IoT sensor addresses
+    /// (one per blood transport vehicle, cold-storage unit, or field sensor)
+    /// without impacting instance storage size or contract invocation cost.
+    /// Membership checks are O(1) regardless of whitelist size.
+    OracleApproved(soroban_sdk::Address),
 }
