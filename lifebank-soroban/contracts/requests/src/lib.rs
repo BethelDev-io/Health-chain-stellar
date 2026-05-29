@@ -19,11 +19,11 @@ mod validation;
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 mod inventory_client {
-    use soroban_sdk::{contractclient, Env};
+    use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "InventoryContractClient")]
     pub trait InventoryContractInterface {
-        fn release_reservation(env: Env, reservation_id: u64);
+        fn release_reservation(env: Env, caller: Address, reservation_id: u64);
     }
 }
 
@@ -69,7 +69,8 @@ impl RequestContract {
         if let Some(res_id) = request.reservation_id {
             let inventory_addr = storage::get_inventory_contract(env);
             let inv_client = InventoryContractClient::new(env, &inventory_addr);
-            inv_client.release_reservation(&res_id);
+            let admin = storage::get_admin(env);
+            inv_client.release_reservation(&admin, &res_id);
             request.reservation_id = None;
             true
         } else {
@@ -490,5 +491,24 @@ impl RequestContract {
 
     pub fn is_initialized(env: Env) -> bool {
         storage::is_initialized(&env)
+    }
+
+    /// Upgrade the contract to a new WASM hash. Only admin can call this.
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address that must authorize the upgrade
+    /// * `new_wasm_hash` - Hash of the new WASM code to upgrade to
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller is not the admin
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+        admin.require_auth();
+        storage::require_initialized(&env)?;
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
     }
 }
