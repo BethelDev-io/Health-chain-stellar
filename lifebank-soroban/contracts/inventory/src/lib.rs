@@ -362,14 +362,10 @@ impl InventoryContract {
             }
         }
 
-        // Validate the transition using the pure is_valid_transition function.
-        // This covers terminal state checks (Delivered/Disposed cannot transition)
-        // as well as all illegal backwards transitions.
         if !is_valid_transition(&old_status, &new_status) {
-            // Emit an event with both statuses for debuggability before returning error
             events::emit_invalid_transition(&env, unit_id, old_status, new_status);
-            return Err(ContractError::InvalidStatusTransition);
         }
+        validation::validate_status_transition(old_status, new_status)?;
 
         blood_unit.status = new_status;
         storage::set_blood_unit(&env, &blood_unit);
@@ -490,9 +486,7 @@ impl InventoryContract {
                 }
             }
 
-            if !is_valid_transition(&blood_unit.status, &new_status) {
-                return Err(ContractError::InvalidStatusTransition);
-            }
+            validation::validate_status_transition(blood_unit.status, new_status)?;
         }
 
         // 2. All units valid, perform updates

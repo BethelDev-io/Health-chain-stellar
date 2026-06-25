@@ -5,10 +5,40 @@ mod storage;
 mod types;
 
 use crate::error::ContractError;
-use crate::types::{DataKey, PendingThresholdChange, TemperatureReading, TemperatureSummary, TemperatureThreshold};
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Vec};
-use crate::types::{DataKey, ExcursionSummary, TemperatureReading, TemperatureSummary, TemperatureThreshold};
-use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, Env, Vec};
+use crate::types::{DataKey, ExcursionSummary, PendingThresholdChange, TemperatureReading, TemperatureSummary, TemperatureThreshold};
+use soroban_sdk::{contract, contractclient, contractevent, contractimpl, Address, Env, Vec};
+
+#[contractevent(topics = ["threshold", "proposed"], data_format = "vec")]
+pub struct ThresholdProposed {
+    pub unit_id: u64,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
+    pub effective_at: u64,
+}
+
+#[contractevent(topics = ["threshold", "applied"], data_format = "vec")]
+pub struct ThresholdApplied {
+    pub unit_id: u64,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
+}
+
+#[contractevent(topics = ["oracle", "added"], data_format = "single-value")]
+pub struct OracleAdded {
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["oracle", "removed"], data_format = "single-value")]
+pub struct OracleRemoved {
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["tmp_excur"], data_format = "vec")]
+pub struct ExcursionReported {
+    pub unit_id: u64,
+    pub payment_id: u64,
+    pub violation_count: u32,
+}
 
 const PAGE_SIZE: u32 = 20;
 /// TTL constants for persistent oracle approval entries (in ledgers; ~5 s each).
@@ -92,10 +122,13 @@ impl TemperatureContract {
             .set(&DataKey::PendingThresholdChange(unit_id), &pending_change);
 
         // Emit event for transparency
-        env.events().publish(
-            (symbol_short!("threshold"), symbol_short!("proposed")),
-            (unit_id, min_celsius_x100, max_celsius_x100, effective_at),
-        );
+        ThresholdProposed {
+            unit_id,
+            min_celsius_x100,
+            max_celsius_x100,
+            effective_at,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -135,10 +168,12 @@ impl TemperatureContract {
             .remove(&DataKey::PendingThresholdChange(unit_id));
 
         // Emit event
-        env.events().publish(
-            (symbol_short!("threshold"), symbol_short!("applied")),
-            (unit_id, threshold.min_celsius_x100, threshold.max_celsius_x100),
-        );
+        ThresholdApplied {
+            unit_id,
+            min_celsius_x100: threshold.min_celsius_x100,
+            max_celsius_x100: threshold.max_celsius_x100,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -555,10 +590,7 @@ impl TemperatureContract {
         env.storage()
             .persistent()
             .extend_ttl(&key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
-        env.events().publish(
-            (soroban_sdk::symbol_short!("oracle"),),
-            (soroban_sdk::symbol_short!("added"), oracle),
-        );
+        OracleAdded { oracle }.publish(&env);
         Ok(())
     }
 
@@ -586,10 +618,7 @@ impl TemperatureContract {
         }
         let key = DataKey::OracleApproved(oracle.clone());
         env.storage().persistent().remove(&key);
-        env.events().publish(
-            (soroban_sdk::symbol_short!("oracle"),),
-            (soroban_sdk::symbol_short!("removed"), oracle),
-        );
+        OracleRemoved { oracle }.publish(&env);
         Ok(())
     }
 
@@ -666,10 +695,12 @@ impl TemperatureContract {
             .map_err(|_| ContractError::CoordinatorCallFailed)?
             .map_err(|_| ContractError::CoordinatorCallFailed)?;
 
-        env.events().publish(
-            (soroban_sdk::symbol_short!("tmp_excur"),),
-            (unit_id, payment_id, excursion_summary.violation_count),
-        );
+        ExcursionReported {
+            unit_id,
+            payment_id,
+            violation_count: excursion_summary.violation_count,
+        }
+        .publish(&env);
 
         Ok(())
     }

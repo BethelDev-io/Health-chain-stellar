@@ -1,8 +1,21 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
 };
+
+#[contractevent(topics = ["delivery", "init"], data_format = "vec")]
+pub struct DeliveryInitialized {
+    pub admin: Address,
+    pub request_contract: Address,
+}
+
+#[contractevent(topics = ["comply"], data_format = "vec")]
+pub struct ComplianceAttested {
+    pub delivery_id: u64,
+    pub compliance_hash: Bytes,
+    pub is_compliant: bool,
+}
 
 const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
@@ -78,10 +91,11 @@ impl DeliveryContract {
             .instance()
             .set(&DataKey::ProofRequirements, &proof_requirements);
 
-        env.events().publish(
-            (symbol_short!("init"), symbol_short!("v1")),
-            (admin, request_contract),
-        );
+        DeliveryInitialized {
+            admin,
+            request_contract,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -144,10 +158,12 @@ impl DeliveryContract {
             &(compliance_hash.clone(), is_compliant),
         );
 
-        env.events().publish(
-            (symbol_short!("comply"), symbol_short!("v1")),
-            (delivery_id, compliance_hash, is_compliant),
-        );
+        ComplianceAttested {
+            delivery_id,
+            compliance_hash,
+            is_compliant,
+        }
+        .publish(&env);
 
         Ok(())
     }
