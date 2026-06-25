@@ -809,7 +809,6 @@ fn non_disputed_payments_are_ignored() {
 }
 
 #[test]
-#[test]
 fn escrow_conditions_block_release_when_unmet() {
     let env = Env::default();
     env.mock_all_auths();
