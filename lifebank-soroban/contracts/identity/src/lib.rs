@@ -1182,4 +1182,3 @@ impl AccessControlContract {
 }
 
 mod test;
-mod verification;
