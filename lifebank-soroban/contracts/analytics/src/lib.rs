@@ -9,7 +9,12 @@ mod test;
 pub use error::AnalyticsError;
 pub use types::{AnalyticsConfig, DataKey, MetricsSnapshot, PeriodType, ReportingPeriod};
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
+use soroban_sdk::{contract, contractevent, contractimpl, Address, Env};
+
+#[contractevent(topics = ["anlytcs", "init"], data_format = "single-value")]
+pub struct AnalyticsInitialized {
+    pub admin: Address,
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -142,14 +147,7 @@ impl AnalyticsContract {
             .set(&DataKey::TotalPaymentsReleased, &0u64);
         env.storage().persistent().set(&DataKey::TotalVolume, &0i128);
 
-        env.events().publish(
-            (
-                symbol_short!("anlytcs"),
-                symbol_short!("init"),
-                symbol_short!("v1"),
-            ),
-            admin,
-        );
+        AnalyticsInitialized { admin }.publish(&env);
 
         Ok(())
     }

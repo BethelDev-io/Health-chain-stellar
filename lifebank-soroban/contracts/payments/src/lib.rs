@@ -1,7 +1,8 @@
 #![no_std]
 use soroban_sdk::token;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contractevent, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
+    String, Vec,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -466,6 +467,88 @@ fn try_cancel_request(env: &Env, requests_contract: &Address, request_id: u64) {
     );
 }
 
+// ── Contract events ───────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["payment", "created"], data_format = "single-value")]
+pub struct PaymentCreated {
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["payment", "escrowed"], data_format = "single-value")]
+pub struct PaymentEscrowed {
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["payment", "coord_ok"], data_format = "single-value")]
+pub struct PaymentCoordConfirmed {
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["payment", "released"], data_format = "vec")]
+pub struct PaymentReleased {
+    pub payment_id: u64,
+    pub payee: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["payment", "hosp_ok"], data_format = "single-value")]
+pub struct PaymentHospConfirmed {
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["payment", "status"], data_format = "vec")]
+pub struct PaymentStatusChanged {
+    pub payment_id: u64,
+    pub old_status: PaymentStatus,
+    pub new_status: PaymentStatus,
+}
+
+#[contractevent(topics = ["payment", "disputed"], data_format = "vec")]
+pub struct PaymentDisputed {
+    pub payment_id: u64,
+    pub reason_code: u32,
+    pub case_id: String,
+}
+
+#[contractevent(topics = ["payment", "resolved"], data_format = "single-value")]
+pub struct PaymentResolved {
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["payment", "refunded"], data_format = "vec")]
+pub struct PaymentRefunded {
+    pub payment_id: u64,
+    pub payer: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["pledge", "create"], data_format = "single-value")]
+pub struct PledgeCreated {
+    pub pledge_id: u64,
+}
+
+#[contractevent(topics = ["vest", "created"], data_format = "vec")]
+pub struct VestingCreated {
+    pub donor: Address,
+    pub total_amount: i128,
+    pub cliff_timestamp: u64,
+    pub vest_end_timestamp: u64,
+}
+
+#[contractevent(topics = ["vest", "claimed"], data_format = "vec")]
+pub struct VestingClaimed {
+    pub donor: Address,
+    pub claimable: i128,
+    pub new_claimed: i128,
+}
+
+#[contractevent(topics = ["request", "cancelled"], data_format = "vec")]
+pub struct RequestCancelledByPayment {
+    pub request_id: u64,
+    pub payment_id: u64,
+    pub timestamp: u64,
+}
+
 // ── Contract ───────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -602,14 +685,7 @@ impl PaymentContract {
         index_by_request(&env, request_id, id);
         timeline_append(&env, request_id, id);
 
-        env.events().publish(
-            (
-                symbol_short!("payment"),
-                symbol_short!("created"),
-                symbol_short!("v1"),
-            ),
-            id,
-        );
+        PaymentCreated { payment_id: id }.publish(&env);
 
         Ok(id)
     }
@@ -690,14 +766,7 @@ impl PaymentContract {
         timeline_append(&env, request_id, id);
         update_stats_on_transition(&env, amount, PaymentStatus::Pending, PaymentStatus::Locked);
 
-        env.events().publish(
-            (
-                symbol_short!("payment"),
-                symbol_short!("escrowed"),
-                symbol_short!("v1"),
-            ),
-            id,
-        );
+        PaymentEscrowed { payment_id: id }.publish(&env);
 
         Ok(id)
     }
@@ -731,10 +800,7 @@ impl PaymentContract {
 
         if !hospital_confirmed {
             // Coordinator confirmed but waiting for hospital
-            env.events().publish(
-                (symbol_short!("payment"), symbol_short!("coord_ok")),
-                payment_id,
-            );
+            PaymentCoordConfirmed { payment_id }.publish(&env);
             return Ok(());
         }
 
@@ -761,10 +827,7 @@ impl PaymentContract {
         env.storage().persistent().remove(&coord_key);
         env.storage().persistent().remove(&hosp_key);
 
-        env.events().publish(
-            (symbol_short!("payment"), symbol_short!("released")),
-            (payment_id, payment.payee.clone(), payment.amount),
-        );
+        PaymentReleased { payment_id, payee: payment.payee.clone(), amount: payment.amount }.publish(&env);
         Ok(())
     }
 
@@ -794,10 +857,7 @@ impl PaymentContract {
 
         if !coordinator_confirmed {
             // Hospital confirmed but waiting for coordinator
-            env.events().publish(
-                (symbol_short!("payment"), symbol_short!("hosp_ok")),
-                payment_id,
-            );
+            PaymentHospConfirmed { payment_id }.publish(&env);
             return Ok(());
         }
 
@@ -824,10 +884,7 @@ impl PaymentContract {
         env.storage().persistent().remove(&coord_key);
         env.storage().persistent().remove(&hosp_key);
 
-        env.events().publish(
-            (symbol_short!("payment"), symbol_short!("released")),
-            (payment_id, payment.payee.clone(), payment.amount),
-        );
+        PaymentReleased { payment_id, payee: payment.payee.clone(), amount: payment.amount }.publish(&env);
         Ok(())
     }
 
@@ -863,10 +920,7 @@ impl PaymentContract {
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded);
         remove_from_request_index(&env, payment.request_id);
 
-        env.events().publish(
-            (symbol_short!("payment"), symbol_short!("refunded")),
-            (payment_id, payment.payer.clone(), payment.amount),
-        );
+        PaymentRefunded { payment_id, payer: payment.payer.clone(), amount: payment.amount }.publish(&env);
         Ok(())
     }
 
@@ -896,10 +950,7 @@ impl PaymentContract {
         // Emit event on every status transition so off-chain indexers can stay
         // in sync without polling. Topics: ("payment", "status") so indexers can
         // filter by contract + topic pair.
-        env.events().publish(
-            (symbol_short!("payment"), symbol_short!("status")),
-            (payment_id, old_status, status),
-        );
+        PaymentStatusChanged { payment_id, old_status, new_status: status }.publish(&env);
 
         Ok(())
     }
@@ -927,14 +978,7 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Disputed, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed);
-        env.events().publish(
-            (
-                symbol_short!("payment"),
-                symbol_short!("disputed"),
-                symbol_short!("v1"),
-            ),
-            (payment_id, dispute_reason_to_code(reason), case_id),
-        );
+        PaymentDisputed { payment_id, reason_code: dispute_reason_to_code(reason), case_id }.publish(&env);
         Ok(())
     }
 
@@ -948,14 +992,7 @@ impl PaymentContract {
         }
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
-        env.events().publish(
-            (
-                symbol_short!("payment"),
-                symbol_short!("resolved"),
-                symbol_short!("v1"),
-            ),
-            payment_id,
-        );
+        PaymentResolved { payment_id }.publish(&env);
         Ok(())
     }
 
@@ -1095,14 +1132,7 @@ impl PaymentContract {
         };
         store_pledge(&env, &pledge);
 
-        env.events().publish(
-            (
-                symbol_short!("pledge"),
-                symbol_short!("create"),
-                symbol_short!("v1"),
-            ),
-            id,
-        );
+        PledgeCreated { pledge_id: id }.publish(&env);
 
         Ok(id)
     }
@@ -1174,10 +1204,7 @@ impl PaymentContract {
 
         store_vesting(&env, &schedule);
 
-        env.events().publish(
-            (symbol_short!("vest"), symbol_short!("created")),
-            (donor, total_amount, now + cliff_secs, now + duration_secs),
-        );
+        VestingCreated { donor, total_amount, cliff_timestamp: now + cliff_secs, vest_end_timestamp: now + duration_secs }.publish(&env);
 
         Ok(())
     }
@@ -1218,10 +1245,7 @@ impl PaymentContract {
         let token_client = token::Client::new(&env, &reward_token);
         token_client.transfer(&env.current_contract_address(), &donor, &claimable);
 
-        env.events().publish(
-            (symbol_short!("vest"), symbol_short!("claimed")),
-            (donor, claimable, new_claimed),
-        );
+        VestingClaimed { donor, claimable, new_claimed }.publish(&env);
 
         Ok(claimable)
     }
@@ -1301,15 +1325,8 @@ impl PaymentContract {
                 try_cancel_request(&env, rc, payment.request_id);
             }
 
-            env.events().publish(
-                (symbol_short!("payment"), symbol_short!("refunded")),
-                (pid, payment.payer.clone(), payment.amount),
-            );
-            // Request-level event for off-chain projections.
-            env.events().publish(
-                (symbol_short!("request"), symbol_short!("cancelled")),
-                (payment.request_id, pid, now),
-            );
+            PaymentRefunded { payment_id: pid, payer: payment.payer.clone(), amount: payment.amount }.publish(&env);
+            RequestCancelledByPayment { request_id: payment.request_id, payment_id: pid, timestamp: now }.publish(&env);
 
             refunded.push_back(pid);
         }

@@ -1,5 +1,5 @@
 use crate::error::ContractError;
-use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, Map, String, Symbol, Vec};
 
 /// Blood type enumeration supporting all major blood groups
 ///
@@ -329,7 +329,7 @@ pub struct Reservation {
     pub request_id: u64,
 }
 
-#[contracttype]
+#[contractevent(topics = ["blood_registered"])]
 #[derive(Clone, Debug)]
 pub struct BloodRegisteredEvent {
     /// Unique ID of the registered blood unit
@@ -352,7 +352,7 @@ pub struct BloodRegisteredEvent {
 }
 
 /// Event emitted when blood unit status changes
-#[contracttype]
+#[contractevent(topics = ["status_changed"])]
 #[derive(Clone, Debug)]
 pub struct StatusChangeEvent {
     /// Unique ID of the blood unit
@@ -376,7 +376,7 @@ pub struct StatusChangeEvent {
 
 /// On-chain audit event for every blood unit status transition.
 /// Emitted as `blood_unit_status_changed` — immutable once published.
-#[contracttype]
+#[contractevent(topics = ["bld_unit_chg"])]
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
     /// Blood unit that transitioned

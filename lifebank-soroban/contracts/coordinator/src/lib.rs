@@ -18,7 +18,7 @@ mod test;
 pub use error::CoordinatorError;
 pub use types::{DataKey, ExcursionSummary, WorkflowRecord, WorkflowStatus};
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String, Vec};
 
 /// Default workflow expiry window: 6 hours expressed in seconds.
 /// After `allocate_units` is called, if `confirm_delivery` is never invoked
@@ -122,6 +122,7 @@ mod request_client {
     use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
     }
@@ -132,6 +133,7 @@ mod inventory_client {
     use soroban_sdk::{contractclient, Address, Env, String};
 
     #[contractclient(name = "InventoryContractClient")]
+    #[allow(dead_code)]
     pub trait InventoryContractInterface {
         fn get_blood_unit(env: Env, blood_unit_id: u64) -> BloodUnit;
         fn update_status(
@@ -168,6 +170,7 @@ mod payment_client {
     }
 
     #[contractclient(name = "PaymentContractClient")]
+    #[allow(dead_code)]
     pub trait PaymentContractInterface {
         fn get_payment(env: Env, payment_id: u64) -> Payment;
         fn update_status(env: Env, payment_id: u64, status: PaymentStatus);
@@ -178,6 +181,54 @@ mod payment_client {
 use inventory_client::InventoryContractClient;
 use payment_client::PaymentContractClient;
 use request_client::RequestContractClient;
+
+// ── Contract events ───────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["coord", "init"], data_format = "single-value")]
+pub struct CoordInitialized {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["coord", "emrghlt"], data_format = "single-value")]
+pub struct CoordEmergencyHalt {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["coord", "alloc"], data_format = "vec")]
+pub struct CoordAllocated {
+    pub request_id: u64,
+    pub unit_ids: Vec<u64>,
+    pub unit_count: u32,
+}
+
+#[contractevent(topics = ["coord", "dlvrd"], data_format = "vec")]
+pub struct CoordDelivered {
+    pub request_id: u64,
+    pub location: String,
+}
+
+#[contractevent(topics = ["coord", "settld"], data_format = "vec")]
+pub struct CoordSettled {
+    pub request_id: u64,
+    pub payment_id: u64,
+}
+
+#[contractevent(topics = ["coord", "rollbk"], data_format = "single-value")]
+pub struct CoordRolledBack {
+    pub request_id: u64,
+}
+
+#[contractevent(topics = ["coord", "expired"], data_format = "single-value")]
+pub struct CoordExpired {
+    pub request_id: u64,
+}
+
+#[contractevent(topics = ["coord", "tmp_brch"], data_format = "vec")]
+pub struct CoordTemperatureBreach {
+    pub payment_id: u64,
+    pub unit_id: u64,
+    pub timestamp: u64,
+}
 
 // ── Storage helpers ────────────────────────────────────────────────────────────
 
@@ -247,14 +298,7 @@ impl CoordinatorContract {
         env.storage()
             .instance()
             .set(&DataKey::PaymentContract, &payment_contract);
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("init"),
-                symbol_short!("v1"),
-            ),
-            admin,
-        );
+        CoordInitialized { admin }.publish(&env);
         Ok(())
     }
 
@@ -338,14 +382,7 @@ impl CoordinatorContract {
             return Err(CoordinatorError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::EmergencyHalt, &true);
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("emrghlt"),
-                symbol_short!("v1"),
-            ),
-            admin,
-        );
+        CoordEmergencyHalt { admin }.publish(&env);
         Ok(())
     }
 
@@ -437,14 +474,7 @@ impl CoordinatorContract {
                 .map_err(|_| CoordinatorError::InventoryUpdateFailed)?;
         }
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("alloc"),
-                symbol_short!("v1"),
-            ),
-            (request_id, unit_ids.clone(), unit_ids.len()),
-        );
+        CoordAllocated { request_id, unit_ids: unit_ids.clone(), unit_count: unit_ids.len() }.publish(&env);
 
         save_workflow(
             &env,
@@ -511,14 +541,7 @@ impl CoordinatorContract {
         wf.delivery_location = Some(location.clone());
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("dlvrd"),
-                symbol_short!("v1"),
-            ),
-            (request_id, location),
-        );
+        CoordDelivered { request_id, location }.publish(&env);
 
         Ok(())
     }
@@ -564,14 +587,7 @@ impl CoordinatorContract {
         wf.status = WorkflowStatus::Settled;
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("settld"),
-                symbol_short!("v1"),
-            ),
-            (request_id, wf.payment_id),
-        );
+        CoordSettled { request_id, payment_id: wf.payment_id }.publish(&env);
 
         Ok(())
     }
@@ -624,14 +640,7 @@ impl CoordinatorContract {
         wf.status = WorkflowStatus::RolledBack;
         save_workflow(&env, &wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("rollbk"),
-                symbol_short!("v1"),
-            ),
-            request_id,
-        );
+        CoordRolledBack { request_id }.publish(&env);
 
         Ok(())
     }
@@ -705,14 +714,7 @@ impl CoordinatorContract {
         expired_wf.status = WorkflowStatus::RolledBack;
         save_workflow(&env, &expired_wf);
 
-        env.events().publish(
-            (
-                symbol_short!("coord"),
-                symbol_short!("expired"),
-                symbol_short!("v1"),
-            ),
-            request_id,
-        );
+        CoordExpired { request_id }.publish(&env);
 
         Ok(())
     }
@@ -767,10 +769,7 @@ impl CoordinatorContract {
             .map_err(|_| CoordinatorError::PaymentFlagFailed)?;
 
         let now = env.ledger().timestamp();
-        env.events().publish(
-            (symbol_short!("coord"), symbol_short!("tmp_brch")),
-            (payment_id, excursion_summary.unit_id, now),
-        );
+        CoordTemperatureBreach { payment_id, unit_id: excursion_summary.unit_id, timestamp: now }.publish(&env);
 
         Ok(())
     }

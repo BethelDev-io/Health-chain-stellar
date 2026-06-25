@@ -1,6 +1,6 @@
-use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{DataKey, Error, Organization};
+use crate::{DataKey, Error, Organization, OrgUnverified, OrgVerified};
 
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
@@ -126,10 +126,12 @@ impl VerificationTrait for VerificationImpl {
             None,
         );
 
-        env.events().publish(
-            (Symbol::new(&env, "org_verified"), symbol_short!("v1")),
-            (org_id.clone(), admin, now),
-        );
+        OrgVerified {
+            org_id: org_id.clone(),
+            admin,
+            timestamp: now,
+        }
+        .publish(&env);
 
         Ok(metadata)
     }
@@ -183,10 +185,11 @@ impl VerificationTrait for VerificationImpl {
             Some(reason.clone()),
         );
 
-        env.events().publish(
-            (Symbol::new(&env, "org_unverified"), symbol_short!("v1")),
-            (org_id.clone(), reason),
-        );
+        OrgUnverified {
+            org_id: org_id.clone(),
+            reason,
+        }
+        .publish(&env);
 
         Ok(metadata)
     }

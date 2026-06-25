@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, String, Vec};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -116,12 +116,13 @@ pub struct BloodRequest {
     pub history: Vec<RequestHistoryEntry>,
 }
 
+#[contractevent(topics = ["request_created"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[contracttype]
 pub struct RequestCreatedEvent {
+    #[topic]
+    pub blood_type: BloodType,
     pub request_id: u64,
     pub hospital: Address,
-    pub blood_type: BloodType,
     pub quantity_ml: u32,
     pub urgency: u32,
     pub timestamp: u64,

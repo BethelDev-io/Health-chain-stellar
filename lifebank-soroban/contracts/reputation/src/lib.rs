@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
+    contract, contractevent, contracterror, contractimpl, contracttype, Address, Env, Vec,
 };
 
 // ── Constants (all arithmetic is integer, scaled ×100 for two decimal places) ──
@@ -9,12 +9,11 @@ use soroban_sdk::{
 const MAX_SCORE: i64 = 100_00;
 const MIN_SCORE: i64 = 0;
 
-/// Weights — must sum to 100
+/// Weights applied to each score component
 const W_RATING: i64 = 35; // weighted average rating
 const W_COMPLETION: i64 = 25; // completion rate
 const W_RESPONSE: i64 = 20; // response time
 const W_CONSISTENCY: i64 = 10; // consistency bonus
-const W_FRAUD: i64 = 10; // fraud penalty (subtracted)
 
 /// Decay: score loses 1 point per DECAY_PERIOD_SECS of inactivity
 const DECAY_PERIOD_SECS: u64 = 30 * 24 * 3600; // 30 days
@@ -173,6 +172,19 @@ pub enum DataKey {
     Paused,
 }
 
+// ── Contract events ───────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["init"], data_format = "single-value")]
+pub struct ReputationInitialized {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["rep", "updated"], data_format = "vec")]
+pub struct ReputationUpdated {
+    pub entity_id: u64,
+    pub score: i64,
+}
+
 // ── Contract ───────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -216,8 +228,7 @@ impl ReputationContract {
             },
         );
 
-        env.events()
-            .publish((symbol_short!("init"), symbol_short!("v1")), admin);
+        ReputationInitialized { admin }.publish(&env);
 
         Ok(())
     }
@@ -642,14 +653,7 @@ impl ReputationContract {
             .persistent()
             .set(&DataKey::Score(entity_id), &result);
 
-        env.events().publish(
-            (
-                symbol_short!("rep"),
-                symbol_short!("updated"),
-                symbol_short!("v1"),
-            ),
-            (entity_id, final_score),
-        );
+        ReputationUpdated { entity_id, score: final_score }.publish(&env);
 
         Ok(result)
     }
