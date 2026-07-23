@@ -319,10 +319,16 @@ impl IdentityContract {
     }
 
     /// Admin-only: configure the requests contract address used by verify_interaction.
-    pub fn set_requests_contract(env: Env, admin: Address, requests_contract: Address) -> Result<(), Error> {
+    pub fn set_requests_contract(
+        env: Env,
+        admin: Address,
+        requests_contract: Address,
+    ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
-        env.storage().instance().set(&DataKey::RequestsContract, &requests_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::RequestsContract, &requests_contract);
         Ok(())
     }
 
@@ -376,12 +382,18 @@ impl IdentityContract {
 
         let org_key = DataKey::Org(org_id.clone());
         env.storage().persistent().set(&org_key, &organization);
-        env.storage().persistent().extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         env.storage().persistent().set(&license_key, &org_id);
-        env.storage().persistent().extend_ttl(&license_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&license_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         let docs_key = DataKey::Docs(org_id.clone());
         env.storage().persistent().set(&docs_key, &document_hashes);
-        env.storage().persistent().extend_ttl(&docs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&docs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Assign role
         let role = match org_type.clone() {
@@ -399,7 +411,9 @@ impl IdentityContract {
             .unwrap_or(Vec::new(&env));
         list.push_back(org_id.clone());
         env.storage().persistent().set(&type_key, &list);
-        env.storage().persistent().extend_ttl(&type_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&type_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         Self::increment_counter(&env, DataKey::OrgCounter);
 
@@ -461,7 +475,9 @@ impl IdentityContract {
         }
 
         env.storage().persistent().set(&key, &sorted);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Get the primary role of an address (first role in the sorted vec, if any).
@@ -591,7 +607,7 @@ impl IdentityContract {
         for _ in 0..take {
             let mut best_rating = u32::MAX;
             let mut best_idx = n; // sentinel = not found
-            // Find the highest-rated not-yet-selected entry
+                                  // Find the highest-rated not-yet-selected entry
             for i in 0..n {
                 let mut skip = false;
                 for k in 0..selected.len() {
@@ -600,7 +616,9 @@ impl IdentityContract {
                         break;
                     }
                 }
-                if skip { continue; }
+                if skip {
+                    continue;
+                }
                 let r = all.get(i).unwrap().rating;
                 // We want maximum; re-use best_rating as "highest so far"
                 if best_idx == n || r > best_rating {
@@ -608,7 +626,9 @@ impl IdentityContract {
                     best_idx = i;
                 }
             }
-            if best_idx == n { break; } // no more candidates
+            if best_idx == n {
+                break;
+            } // no more candidates
             selected.push_back(best_idx);
             results.push_back(all.get(best_idx).unwrap());
         }
@@ -636,12 +656,16 @@ impl IdentityContract {
         organization.verified = true;
         organization.verified_timestamp = Some(env.ledger().timestamp());
         env.storage().persistent().set(&org_key, &organization);
-        env.storage().persistent().extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Store verifier
         let verifier_key = DataKey::OrgVerifier(org_id.clone());
         env.storage().persistent().set(&verifier_key, &admin);
-        env.storage().persistent().extend_ttl(&verifier_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&verifier_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Emit event
         OrgVerified {
@@ -679,12 +703,16 @@ impl IdentityContract {
         organization.verified = false;
         organization.verified_timestamp = None;
         env.storage().persistent().set(&org_key, &organization);
-        env.storage().persistent().extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Store reason
         let reason_key = DataKey::OrgUnverifyReason(org_id.clone());
         env.storage().persistent().set(&reason_key, &reason);
-        env.storage().persistent().extend_ttl(&reason_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&reason_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Emit event
         OrgUnverified { org_id, reason }.publish(&env);
@@ -733,11 +761,15 @@ impl IdentityContract {
         organization.rating = (total_rating + rating) / organization.total_ratings;
 
         env.storage().persistent().set(&org_key, &organization);
-        env.storage().persistent().extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Mark as rated
         env.storage().persistent().set(&rated_key, &true);
-        env.storage().persistent().extend_ttl(&rated_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&rated_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Store rating record
         let record = RatingRecord {
@@ -749,9 +781,16 @@ impl IdentityContract {
         };
         let rating_key = DataKey::RatingRecord(request_id, rater.clone());
         env.storage().persistent().set(&rating_key, &record);
-        env.storage().persistent().extend_ttl(&rating_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&rating_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        OrgRated { org_id, rater, rating }.publish(&env);
+        OrgRated {
+            org_id,
+            rater,
+            rating,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -835,7 +874,9 @@ impl IdentityContract {
         };
         badges.push_back(record);
         env.storage().persistent().set(&badges_key, &badges);
-        env.storage().persistent().extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         BadgeAwarded { org_id, admin }.publish(&env);
 
@@ -884,7 +925,9 @@ impl IdentityContract {
         }
 
         env.storage().persistent().set(&badges_key, &new_badges);
-        env.storage().persistent().extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         BadgeRevoked { org_id, badge_type }.publish(&env);
 
@@ -944,7 +987,9 @@ impl IdentityContract {
 
         let delivery_key = DataKey::Delivery(request_id);
         env.storage().persistent().set(&delivery_key, &proof);
-        env.storage().persistent().extend_ttl(&delivery_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&delivery_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         DeliveryProofRecorded {
             request_id,
@@ -987,7 +1032,9 @@ impl AccessControlContract {
             panic!("Already initialized");
         }
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().extend_ttl(&DataKey::Admin, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Admin, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Grant a role to an address with optional expiry
@@ -1019,7 +1066,9 @@ impl AccessControlContract {
         roles = Self::insert_sorted(&env, roles, new_grant);
 
         env.storage().persistent().set(&key, &roles);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Revoke a role from an address
@@ -1044,7 +1093,9 @@ impl AccessControlContract {
                 env.storage().persistent().remove(&key);
             } else {
                 env.storage().persistent().set(&key, &roles);
-                env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
             }
         }
     }
@@ -1124,7 +1175,9 @@ impl AccessControlContract {
                     env.storage().persistent().remove(&key);
                 } else {
                     env.storage().persistent().set(&key, &new_roles);
-                    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
                 }
             }
 
@@ -1191,7 +1244,9 @@ impl AccessControlContract {
         }
         scopes.push_back(scope);
         env.storage().persistent().set(&key, &scopes);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Revoke a permission scope from an address. Admin only.
@@ -1217,7 +1272,9 @@ impl AccessControlContract {
                 }
             }
             env.storage().persistent().set(&key, &new_scopes);
-            env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
     }
 

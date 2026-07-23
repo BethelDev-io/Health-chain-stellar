@@ -66,8 +66,8 @@ mod pure_matching {
     fn o_negative_is_universal_donor() {
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for recipient in all {
             assert!(
@@ -82,8 +82,8 @@ mod pure_matching {
     fn ab_positive_is_universal_recipient() {
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for donor in all {
             assert!(
@@ -150,8 +150,8 @@ mod pure_matching {
         let env = env();
         use BloodType::*;
         let all = [
-            APositive, ANegative, BPositive, BNegative,
-            ABPositive, ABNegative, OPositive, ONegative,
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
         ];
         for bt in all {
             let types = compatible_donor_types(&env, bt);
@@ -213,7 +213,13 @@ mod pure_matching {
         let compat_unit = make_unit(&env, 2, BloodType::ONegative, 450, 86_400 * 5);
 
         let exact_score = score_unit(&exact_unit, BloodType::APositive, Urgency::Routine, None, 0);
-        let compat_score = score_unit(&compat_unit, BloodType::APositive, Urgency::Routine, None, 0);
+        let compat_score = score_unit(
+            &compat_unit,
+            BloodType::APositive,
+            Urgency::Routine,
+            None,
+            0,
+        );
 
         assert!(
             exact_score > compat_score,
@@ -227,10 +233,10 @@ mod pure_matching {
     fn expiring_soon_scores_higher_than_fresh() {
         let env = env();
         let expiring = make_unit(&env, 1, BloodType::OPositive, 450, 86_400 * 2); // 2 days
-        let fresh    = make_unit(&env, 2, BloodType::OPositive, 450, 86_400 * 60); // 60 days
+        let fresh = make_unit(&env, 2, BloodType::OPositive, 450, 86_400 * 60); // 60 days
 
         let s_expiring = score_unit(&expiring, BloodType::OPositive, Urgency::Routine, None, 0);
-        let s_fresh    = score_unit(&fresh,    BloodType::OPositive, Urgency::Routine, None, 0);
+        let s_fresh = score_unit(&fresh, BloodType::OPositive, Urgency::Routine, None, 0);
 
         assert!(s_expiring > s_fresh);
     }
@@ -240,7 +246,7 @@ mod pure_matching {
         let env = env();
         let unit = make_unit(&env, 1, BloodType::BPositive, 450, 86_400 * 10);
 
-        let s_critical  = score_unit(&unit, BloodType::BPositive, Urgency::Critical,  None, 0);
+        let s_critical = score_unit(&unit, BloodType::BPositive, Urgency::Critical, None, 0);
         let s_scheduled = score_unit(&unit, BloodType::BPositive, Urgency::Scheduled, None, 0);
 
         assert!(s_critical > s_scheduled);
@@ -355,7 +361,9 @@ mod pure_matching {
         );
 
         assert_eq!(result.len(), 3);
-        let total: u32 = (0..result.len()).map(|i| result.get(i).unwrap().quantity_ml).sum();
+        let total: u32 = (0..result.len())
+            .map(|i| result.get(i).unwrap().quantity_ml)
+            .sum();
         assert_eq!(total, 500);
         assert_eq!(result.get(2).unwrap().quantity_ml, 100); // last unit partially used
     }
@@ -365,13 +373,27 @@ mod pure_matching {
         let env = env();
         let mut candidates = soroban_sdk::Vec::new(&env);
         candidates.push_back(make_unit_with_status(
-            &env, 1, BloodType::ABNegative, 450, 1000, BloodStatus::Reserved,
+            &env,
+            1,
+            BloodType::ABNegative,
+            450,
+            1000,
+            BloodStatus::Reserved,
         ));
         candidates.push_back(make_unit_with_status(
-            &env, 2, BloodType::ABNegative, 450, 2000, BloodStatus::Expired,
+            &env,
+            2,
+            BloodType::ABNegative,
+            450,
+            2000,
+            BloodStatus::Expired,
         ));
         candidates.push_back(make_unit(
-            &env, 3, BloodType::ABNegative, 450, 3000, // Available
+            &env,
+            3,
+            BloodType::ABNegative,
+            450,
+            3000, // Available
         ));
 
         let result = select_units(
@@ -428,7 +450,9 @@ mod pure_matching {
         assert_eq!(result.len(), 2);
         assert_eq!(result.get(0).unwrap().match_kind, MatchKind::Exact);
         assert_eq!(result.get(1).unwrap().match_kind, MatchKind::Compatible);
-        let total: u32 = (0..result.len()).map(|i| result.get(i).unwrap().quantity_ml).sum();
+        let total: u32 = (0..result.len())
+            .map(|i| result.get(i).unwrap().quantity_ml)
+            .sum();
         assert_eq!(total, 500);
     }
 
@@ -470,10 +494,7 @@ mod pure_matching {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod contract_tests {
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     use crate::{BloodType, MatchingContract, MatchingContractClient};
 
@@ -526,8 +547,10 @@ mod contract_tests {
     fn check_compatibility_o_neg_to_all() {
         let (_env, client, ..) = setup();
         use BloodType::*;
-        for recipient in [APositive, ANegative, BPositive, BNegative,
-                          ABPositive, ABNegative, OPositive, ONegative] {
+        for recipient in [
+            APositive, ANegative, BPositive, BNegative, ABPositive, ABNegative, OPositive,
+            ONegative,
+        ] {
             assert!(client.check_compatibility(&ONegative, &recipient));
         }
     }

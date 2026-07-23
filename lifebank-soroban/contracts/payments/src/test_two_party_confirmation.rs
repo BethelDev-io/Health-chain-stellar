@@ -2,13 +2,15 @@
 
 #[cfg(test)]
 mod confirmation_tests {
-use crate::{PaymentContract, PaymentContractClient, PaymentStatus};
-use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env,
-    };
+    use crate::{PaymentContract, PaymentContractClient, PaymentStatus};
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    fn deploy_token_with_balance(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
+    fn deploy_token_with_balance(
+        env: &Env,
+        admin: &Address,
+        recipient: &Address,
+        amount: i128,
+    ) -> Address {
         let token = env.register_stellar_asset_contract_v2(admin.clone());
         let token_id = token.address();
         let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token_id);

@@ -53,18 +53,9 @@ mod registry_client {
 
     /// Release `unit_id` back to `Available` in the registry.
     /// Returns `true` on success, `false` if the registry call failed.
-    pub fn release_unit(
-        env: &Env,
-        registry_id: &Address,
-        bank_id: &Address,
-        unit_id: u64,
-    ) -> bool {
+    pub fn release_unit(env: &Env, registry_id: &Address, bank_id: &Address, unit_id: u64) -> bool {
         let func = Symbol::new(env, "inventory_release_unit");
-        let args: Vec<Val> = vec![
-            &env,
-            bank_id.clone().into_val(env),
-            unit_id.into_val(env),
-        ];
+        let args: Vec<Val> = vec![&env, bank_id.clone().into_val(env), unit_id.into_val(env)];
         matches!(
             env.try_invoke_contract::<(), InvokeError>(registry_id, &func, args),
             Ok(Ok(()))
@@ -141,7 +132,12 @@ impl InventoryContract {
     }
 
     /// Authorize or revoke a blood bank. Only admin can call this.
-    pub fn authorize_bank(env: Env, admin: Address, bank: Address, authorized: bool) -> Result<(), ContractError> {
+    pub fn authorize_bank(
+        env: Env,
+        admin: Address,
+        bank: Address,
+        authorized: bool,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -157,7 +153,12 @@ impl InventoryContract {
     }
 
     /// Grant a role to an address. Admin only.
-    pub fn grant_role(env: Env, admin: Address, grantee: Address, role: Role) -> Result<(), ContractError> {
+    pub fn grant_role(
+        env: Env,
+        admin: Address,
+        grantee: Address,
+        role: Role,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {
@@ -165,7 +166,11 @@ impl InventoryContract {
         }
         let role_key = DataKey::Role(grantee);
         env.storage().persistent().set(&role_key, &role);
-        env.storage().persistent().extend_ttl(&role_key, storage::TTL_THRESHOLD, storage::TTL_EXTEND_TO);
+        env.storage().persistent().extend_ttl(
+            &role_key,
+            storage::TTL_THRESHOLD,
+            storage::TTL_EXTEND_TO,
+        );
         Ok(())
     }
 
@@ -252,7 +257,14 @@ impl InventoryContract {
         // 1. Verify bank authentication
         bank_id.require_auth();
 
-        Self::register_blood_after_auth(env, bank_id, serial_number, blood_type, quantity_ml, donor_id)
+        Self::register_blood_after_auth(
+            env,
+            bank_id,
+            serial_number,
+            blood_type,
+            quantity_ml,
+            donor_id,
+        )
     }
 
     fn register_blood_after_auth(
@@ -352,7 +364,11 @@ impl InventoryContract {
 
         // Persist serial number → unit_id so duplicate registrations are rejected
         env.storage().persistent().set(&serial_key, &blood_unit_id);
-        env.storage().persistent().extend_ttl(&serial_key, storage::TTL_THRESHOLD, storage::TTL_EXTEND_TO);
+        env.storage().persistent().extend_ttl(
+            &serial_key,
+            storage::TTL_THRESHOLD,
+            storage::TTL_EXTEND_TO,
+        );
 
         // Update indexes for efficient querying
         storage::add_to_blood_type_index(&env, &blood_unit);
@@ -401,8 +417,7 @@ impl InventoryContract {
 
         Self::require_not_paused(&env)?;
 
-        let blood_unit =
-            storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+        let blood_unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
         let role = Self::get_role(&env, &authorized_by);
         Self::assert_can_transition(&role, &new_status)?;
@@ -537,7 +552,8 @@ impl InventoryContract {
         // 1. Validate all units first (atomicity)
         for i in 0..unit_ids.len() {
             let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
-            let blood_unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
+            let blood_unit =
+                storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
             if authorized_by != admin && authorized_by != blood_unit.bank_id {
                 return Err(ContractError::Unauthorized);
@@ -793,10 +809,14 @@ impl InventoryContract {
     ///
     /// Records a status history entry and emits a status-change event for every
     /// unit that transitions Reserved → Available, preserving the full audit trail.
-    pub fn release_reservation(env: Env, caller: Address, reservation_id: u64) -> Result<(), ContractError> {
+    pub fn release_reservation(
+        env: Env,
+        caller: Address,
+        reservation_id: u64,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
-        
+
         let reservation = storage::get_reservation(&env, reservation_id)
             .ok_or(ContractError::ReservationNotFound)?;
 
@@ -930,7 +950,11 @@ impl InventoryContract {
     ///
     /// # Errors
     /// * `Unauthorized` - If caller is not the admin
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         if admin != stored_admin {

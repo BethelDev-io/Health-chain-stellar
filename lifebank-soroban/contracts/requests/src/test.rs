@@ -18,7 +18,8 @@ fn create_uninitialized_contract<'a>() -> (Env, RequestContractClient<'a>, Addre
     (env, client, contract_id)
 }
 
-fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address) {
+fn create_initialized_contract<'a>() -> (Env, RequestContractClient<'a>, Address, Address, Address)
+{
     let (env, client, contract_id) = create_uninitialized_contract();
     let admin = Address::generate(&env);
     let inventory_contract = Address::generate(&env);
@@ -49,10 +50,8 @@ fn test_initialize_sets_admin_inventory_counter_and_metadata() {
     );
 
     let stored_admin = env.as_contract(&contract_id, || storage::get_admin(&env));
-    let stored_inventory =
-        env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
-    let stored_counter =
-        env.as_contract(&contract_id, || storage::get_request_counter(&env));
+    let stored_inventory = env.as_contract(&contract_id, || storage::get_inventory_contract(&env));
+    let stored_counter = env.as_contract(&contract_id, || storage::get_request_counter(&env));
 
     assert_eq!(stored_admin, admin);
     assert_eq!(stored_inventory, inventory_contract);

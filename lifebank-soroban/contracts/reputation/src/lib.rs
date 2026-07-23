@@ -2,7 +2,7 @@
 #![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contractevent, contracterror, contractimpl, contracttype, Address, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Vec,
 };
 
 // ── Constants (all arithmetic is integer, scaled ×100 for two decimal places) ──
@@ -660,7 +660,11 @@ impl ReputationContract {
             .persistent()
             .set(&DataKey::Score(entity_id), &result);
 
-        ReputationUpdated { entity_id, score: final_score }.publish(&env);
+        ReputationUpdated {
+            entity_id,
+            score: final_score,
+        }
+        .publish(&env);
 
         Ok(result)
     }

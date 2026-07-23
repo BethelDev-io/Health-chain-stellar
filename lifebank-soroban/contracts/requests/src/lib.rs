@@ -235,8 +235,7 @@ impl RequestContract {
         }
 
         for i in 0..entries.len() {
-            let (_, _, quantity_ml, _, required_by_timestamp) =
-                entries.get(i).unwrap();
+            let (_, _, quantity_ml, _, required_by_timestamp) = entries.get(i).unwrap();
             validation::validate_timestamp(&env, required_by_timestamp)?;
             validation::validate_quantity(quantity_ml)?;
         }
@@ -293,8 +292,8 @@ impl RequestContract {
         storage::require_initialized(&env)?;
         Self::ensure_non_empty_reason(&reason)?;
 
-        let mut request = storage::get_request(&env, request_id)
-            .ok_or(ContractError::RequestNotFound)?;
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
 
         let admin = storage::get_admin(&env);
         if caller != request.hospital_id && caller != admin {
@@ -322,12 +321,7 @@ impl RequestContract {
         );
         storage::set_request(&env, &request);
 
-        events::emit_request_cancelled(
-            &env,
-            request_id,
-            &caller,
-            env.ledger().timestamp(),
-        );
+        events::emit_request_cancelled(&env, request_id, &caller, env.ledger().timestamp());
 
         Ok(())
     }
@@ -349,8 +343,8 @@ impl RequestContract {
             return Err(ContractError::Unauthorized);
         }
 
-        let mut request = storage::get_request(&env, request_id)
-            .ok_or(ContractError::RequestNotFound)?;
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
 
         if request.status == new_status {
             return Err(ContractError::InvalidRequestStatus);
@@ -372,7 +366,9 @@ impl RequestContract {
                 released_reservation = Self::release_reservation_if_present(&env, &mut request);
             }
             RequestStatus::Fulfilled => {
-                let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+                let remaining = request
+                    .quantity_ml
+                    .saturating_sub(request.fulfilled_quantity_ml);
                 fulfilled_delta_ml = remaining;
                 request.fulfilled_quantity_ml = request.quantity_ml;
             }
@@ -428,11 +424,14 @@ impl RequestContract {
 
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
-        if request.status != RequestStatus::Approved && request.status != RequestStatus::InProgress {
+        if request.status != RequestStatus::Approved && request.status != RequestStatus::InProgress
+        {
             return Err(ContractError::InvalidRequestStatus);
         }
 
-        let remaining = request.quantity_ml.saturating_sub(request.fulfilled_quantity_ml);
+        let remaining = request
+            .quantity_ml
+            .saturating_sub(request.fulfilled_quantity_ml);
         if fulfilled_delta_ml > remaining {
             return Err(ContractError::InvalidQuantity);
         }
@@ -474,7 +473,8 @@ impl RequestContract {
         request_id: u64,
     ) -> Result<soroban_sdk::Vec<RequestHistoryEntry>, ContractError> {
         storage::require_initialized(&env)?;
-        let request = storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        let request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
         Ok(request.history)
     }
 
@@ -551,7 +551,11 @@ impl RequestContract {
     ///
     /// # Errors
     /// * `Unauthorized` - If caller is not the admin
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         storage::require_initialized(&env)?;
         let stored_admin = storage::get_admin(&env);

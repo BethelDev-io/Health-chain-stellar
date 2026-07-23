@@ -74,7 +74,9 @@ fn load_snapshot(env: &Env, period_index: u64) -> MetricsSnapshot {
 fn save_snapshot(env: &Env, snapshot: &MetricsSnapshot) {
     let key = DataKey::Snapshot(snapshot.period_index);
     env.storage().persistent().set(&key, snapshot);
-    env.storage().persistent().extend_ttl(&key, SNAPSHOT_TTL_MIN, SNAPSHOT_TTL_MAX);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, SNAPSHOT_TTL_MIN, SNAPSHOT_TTL_MAX);
 }
 
 fn get_counter_u64(env: &Env, key: &DataKey) -> u64 {
@@ -132,14 +134,18 @@ impl AnalyticsContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDonations, &0u64);
-        env.storage().persistent().set(&DataKey::TotalRequests, &0u64);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalRequests, &0u64);
         env.storage()
             .persistent()
             .set(&DataKey::TotalDeliveries, &0u64);
         env.storage()
             .persistent()
             .set(&DataKey::TotalPaymentsReleased, &0u64);
-        env.storage().persistent().set(&DataKey::TotalVolume, &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalVolume, &0i128);
 
         AnalyticsInitialized { admin }.publish(&env);
 

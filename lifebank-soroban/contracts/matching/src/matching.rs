@@ -124,16 +124,14 @@ pub fn score_unit(
     }
 
     // 2. Expiration urgency (FIFO) — units expiring sooner score higher
-    let secs_until_expiry = unit
-        .expiration_timestamp
-        .saturating_sub(now_timestamp);
+    let secs_until_expiry = unit.expiration_timestamp.saturating_sub(now_timestamp);
     let days_until_expiry = secs_until_expiry / 86_400;
     score += match days_until_expiry {
-        0..=3   => 30,
-        4..=7   => 25,
-        8..=14  => 18,
+        0..=3 => 30,
+        4..=7 => 25,
+        8..=14 => 18,
         15..=30 => 10,
-        _       => 4,
+        _ => 4,
     };
 
     // 3. Request urgency weight
@@ -233,7 +231,13 @@ pub fn select_units(
         } else {
             remaining
         };
-        let s = score_unit(&unit, request_blood_type, request_urgency, bank_hint, now_timestamp);
+        let s = score_unit(
+            &unit,
+            request_blood_type,
+            request_urgency,
+            bank_hint,
+            now_timestamp,
+        );
         result.push_back(MatchedUnit {
             unit_id: unit.id,
             blood_type: unit.blood_type,
@@ -257,7 +261,13 @@ pub fn select_units(
         } else {
             remaining
         };
-        let s = score_unit(&unit, request_blood_type, request_urgency, bank_hint, now_timestamp);
+        let s = score_unit(
+            &unit,
+            request_blood_type,
+            request_urgency,
+            bank_hint,
+            now_timestamp,
+        );
         result.push_back(MatchedUnit {
             unit_id: unit.id,
             blood_type: unit.blood_type,
