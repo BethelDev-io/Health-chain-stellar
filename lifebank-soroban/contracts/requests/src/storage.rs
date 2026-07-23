@@ -100,6 +100,7 @@ pub fn revoke_blood_bank(env: &Env, blood_bank: &Address) {
         .remove(&DataKey::AuthorizedBloodBank(blood_bank.clone()));
 }
 
+#[allow(dead_code)]
 pub fn is_blood_bank_authorized(env: &Env, blood_bank: &Address) -> bool {
     env.storage()
         .instance()
@@ -119,6 +120,7 @@ pub fn revoke_rider(env: &Env, rider: &Address) {
         .remove(&DataKey::AuthorizedRider(rider.clone()));
 }
 
+#[allow(dead_code)]
 pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
     env.storage()
         .instance()

@@ -1,7 +1,7 @@
 //! Fuzz tests for payments contract (issue #844)
 
 use proptest::prelude::*;
-use soroban_sdk::{testutils::Address as _, Address, Env, String as SorobanString};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 use payment_contract::{PaymentContract, PaymentContractClient};
 
 proptest! {
@@ -13,7 +13,7 @@ proptest! {
         let env = Env::default();
         env.mock_all_auths();
         
-        let contract_id = env.register_contract(None, PaymentContract);
+        let contract_id = env.register(PaymentContract, ());
         let client = PaymentContractClient::new(&env, &contract_id);
         
         let admin = Address::generate(&env);

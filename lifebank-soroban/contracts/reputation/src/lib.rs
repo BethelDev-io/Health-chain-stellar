@@ -460,7 +460,7 @@ impl ReputationContract {
         env: Env,
         event_kind: u32,
         entity_id: u64,
-        completed: bool,
+        _completed: bool,
         response_secs: u64,
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {

@@ -2,8 +2,8 @@
 #![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+    String, Vec,
 };
 
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
@@ -424,7 +424,7 @@ impl IdentityContract {
     /// Internal helper to grant a role to an address (no auth check).
     fn grant_role_internal(env: &Env, address: Address, role: Role) {
         let key = DataKey::AddressRoles(address.clone());
-        let mut roles: Vec<RoleGrant> = env
+        let roles: Vec<RoleGrant> = env
             .storage()
             .persistent()
             .get(&key)

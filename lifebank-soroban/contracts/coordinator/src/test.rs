@@ -7,7 +7,7 @@
 //! drives the full request → allocation → delivery → settlement sequence.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, vec, Address, Env, String,
 };
 
 use super::{

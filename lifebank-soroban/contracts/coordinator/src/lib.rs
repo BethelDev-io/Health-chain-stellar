@@ -122,7 +122,7 @@ pub struct Payment {
 
 mod request_client {
     use super::BloodRequest;
-    use soroban_sdk::{contractclient, Address, Env};
+    use soroban_sdk::{contractclient, Env};
 
     #[contractclient(name = "RequestContractClient")]
     #[allow(dead_code)]

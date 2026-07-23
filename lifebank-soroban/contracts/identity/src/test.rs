@@ -2,7 +2,6 @@
 
 use super::*;
 use soroban_sdk::{
-    symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
     vec, Address, BytesN, Env, String, Symbol, TryFromVal,
 };
@@ -1399,11 +1398,6 @@ fn test_attack_self_grant_rider_to_admin_must_fail() {
     // The contract must reject because the stored admin != rider.
     env.set_auths(&[]);
     // Re-mock only rider auth (not admin).
-    use soroban_sdk::testutils::AuthorizedFunction;
-    use soroban_sdk::testutils::MockAuth;
-    use soroban_sdk::testutils::MockAuthInvoke;
-    use soroban_sdk::IntoVal;
-
     // Attempt: rider calls grant_role_with_expiry for themselves as Admin.
     // The contract reads the stored admin and calls admin.require_auth(),
     // which will fail because the rider is not the admin.
@@ -1506,7 +1500,7 @@ fn test_attack_nomination_hijack_unauthorized_must_fail() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let attacker = Address::generate(&env);
+    let _attacker = Address::generate(&env);
     let fake_nominee = Address::generate(&env);
 
     let contract_id = env.register(AccessControlContract, ());

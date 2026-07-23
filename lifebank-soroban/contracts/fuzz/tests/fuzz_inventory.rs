@@ -33,6 +33,7 @@ fn quantity_strategy() -> impl Strategy<Value = u32> {
 }
 
 /// Generate potentially adversarial duration values
+#[allow(dead_code)]
 fn duration_strategy() -> impl Strategy<Value = u64> {
     prop_oneof![
         Just(0u64),                              // Zero duration

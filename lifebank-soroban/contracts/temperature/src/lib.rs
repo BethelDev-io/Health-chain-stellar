@@ -897,7 +897,7 @@ mod tests {
         client.set_threshold(&admin, &unit_id, &200, &600);
 
         // Log exactly 21 readings (21st will be in second page with padding)
-        for i in 0..21u64 {
+        for _i in 0..21u64 {
             let temp = 400;
             client.log_reading(&oracle, &unit_id, &temp);
         }
@@ -911,7 +911,6 @@ mod tests {
 
         // Verify the 21st reading is not a default/zero-padded entry
         let last_reading = all_readings.get(20).unwrap();
-        assert_eq!(last_reading.temperature_celsius_x100, 400, "21st reading should be valid");
         assert_eq!(last_reading.temperature_celsius_x100, 400, "21st reading should be valid");
     }
 
@@ -970,7 +969,7 @@ mod tests {
         let test_temp = 30_000_000i32;
         let num_readings = 100u64;
 
-        for i in 0..num_readings {
+        for _i in 0..num_readings {
             client.log_reading(&oracle, &unit_id, &test_temp);
         }
 

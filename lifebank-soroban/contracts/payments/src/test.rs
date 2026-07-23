@@ -314,8 +314,8 @@ fn test_get_payments_by_status_filters_correctly() {
     let client = PaymentContractClient::new(&env, &cid);
     let admin = Address::generate(&env);
     client.initialize(&admin, &None);
-    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
-    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
+    let (id1, _payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, _payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300);
 
     client.update_status(&id1, &PaymentStatus::Locked, &admin);
@@ -380,10 +380,10 @@ fn test_statistics_counts_and_totals_correctly() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &None);
 
-    let (id1, payer1, _) = make_payment(&env, &client, 1, 1000);
-    let (id2, payer2, _) = make_payment(&env, &client, 2, 2000);
-    let (id3, payer3, _) = make_payment(&env, &client, 3, 500);
-    let (id4, payer4, _) = make_payment(&env, &client, 4, 750);
+    let (id1, _payer1, _) = make_payment(&env, &client, 1, 1000);
+    let (id2, _payer2, _) = make_payment(&env, &client, 2, 2000);
+    let (id3, _payer3, _) = make_payment(&env, &client, 3, 500);
+    let (id4, _payer4, _) = make_payment(&env, &client, 4, 750);
     make_payment(&env, &client, 5, 300); // stays Pending
 
     client.update_status(&id1, &PaymentStatus::Locked, &admin);
@@ -406,8 +406,8 @@ fn test_statistics_ignores_pending_cancelled_disputed() {
     let client = PaymentContractClient::new(&env, &cid);
     let admin = Address::generate(&env);
     client.initialize(&admin, &None);
-    let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
-    let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
+    let (id1, _payer1, _) = make_payment(&env, &client, 1, 100);
+    let (id2, _payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300); // stays Pending
 
     client.update_status(&id1, &PaymentStatus::Cancelled, &admin);

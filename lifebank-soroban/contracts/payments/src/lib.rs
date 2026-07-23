@@ -432,6 +432,7 @@ mod request_client {
     }
 
     #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
         fn update_request_status(
@@ -636,6 +637,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn is_admin(env: &Env, caller: &Address) -> bool {
         env.storage()
             .instance()
