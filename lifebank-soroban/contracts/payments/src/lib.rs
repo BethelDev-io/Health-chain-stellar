@@ -431,22 +431,80 @@ fn update_stats_on_transition(
 // ── Request-contract cross-contract interface (minimal) ────────────────────────
 
 mod request_client {
-    use soroban_sdk::{contractclient, contracttype, Env};
+    use soroban_sdk::{contractclient, contracttype, Address, Env, Vec};
 
     #[contracttype]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum RequestStatus {
         Pending,
         Approved,
+        InProgress,
         Fulfilled,
         Cancelled,
+        Rejected,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BloodType {
+        APositive,
+        ANegative,
+        BPositive,
+        BNegative,
+        ABPositive,
+        ABNegative,
+        OPositive,
+        ONegative,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BloodComponent {
+        WholeBlood,
+        RedCells,
+        Plasma,
+        Platelets,
+        Cryoprecipitate,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Urgency {
+        Critical,
+        Urgent,
+        Routine,
+        Scheduled,
     }
 
     #[contracttype]
     #[derive(Clone, Debug)]
     pub struct BloodRequest {
         pub id: u64,
+        pub hospital_id: Address,
+        pub blood_type: BloodType,
+        pub component: BloodComponent,
+        pub quantity_ml: u32,
+        pub urgency: Urgency,
+        pub created_timestamp: u64,
+        pub required_by_timestamp: u64,
         pub status: RequestStatus,
+        pub assigned_units: Vec<u64>,
+        pub fulfilled_quantity_ml: u32,
+        pub reservation_id: Option<u64>,
+        pub history: Vec<RequestHistoryEntry>,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Debug)]
+    pub struct RequestHistoryEntry {
+        pub previous_status: RequestStatus,
+        pub is_initial_transition: bool,
+        pub new_status: RequestStatus,
+        pub actor: Address,
+        pub reason: soroban_sdk::String,
+        pub fulfilled_delta_ml: u32,
+        pub released_reservation: bool,
+        pub timestamp: u64,
     }
 
     #[contractclient(name = "RequestContractClient")]
