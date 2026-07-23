@@ -685,10 +685,12 @@ impl PaymentContract {
             return Err(Error::DuplicatePayment);
         }
 
-        // Validate request state if the requests contract is configured.
-        if let Some(rc) = env.storage().instance().get::<_, Address>(&REQ_CONTRACT) {
-            validate_request_payable(&env, &rc, request_id)?;
-        }
+        let rc = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&REQ_CONTRACT)
+            .ok_or(Error::RequestNotFound)?;
+        validate_request_payable(&env, &rc, request_id)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
