@@ -25,6 +25,7 @@ pub struct VerificationEvent {
     pub reason: Option<String>,
 }
 
+#[allow(dead_code)]
 pub trait VerificationTrait {
     /// Verify an organization (admin only)
     /// Returns the verification metadata

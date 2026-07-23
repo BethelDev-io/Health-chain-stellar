@@ -1,6 +1,9 @@
 #![cfg(test)]
 
 use super::*;
+use request_contract::{
+    BloodComponent, BloodType, RequestContract, RequestContractClient, RequestStatus, Urgency,
+};
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
     vec, Address, BytesN, Env, String, Symbol, TryFromVal,
@@ -464,6 +467,36 @@ fn test_unverify_organization_already_unverified() {
 // Rating tests
 // ---------------------------------------------------------------------------
 
+fn setup_fulfilled_request(
+    env: &Env,
+    hospital: &Address,
+    request_client: &RequestContractClient<'_>,
+) -> u64 {
+    let request_id = request_client.create_request(
+        hospital,
+        &BloodType::APositive,
+        &BloodComponent::WholeBlood,
+        &450u32,
+        &Urgency::Urgent,
+        &1_600u64,
+    );
+
+    request_client.update_request_status(
+        &hospital.clone(),
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(env, "approved"),
+    );
+    request_client.update_request_status(
+        &hospital.clone(),
+        &request_id,
+        &RequestStatus::Fulfilled,
+        &String::from_str(env, "fulfilled"),
+    );
+
+    request_id
+}
+
 #[test]
 fn test_rate_organization_valid() {
     let env = Env::default();
@@ -471,8 +504,13 @@ fn test_rate_organization_valid() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -483,8 +521,9 @@ fn test_rate_organization_valid() {
         &vec![&env],
     );
 
-    let rater = Address::generate(&env);
-    client.rate_organization(&rater, &owner, &4, &1_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+
+    client.rate_organization(&owner, &owner, &4, &request_id);
 
     let org = client.get_organization(&owner).unwrap();
     assert_eq!(org.rating, 4);
@@ -498,8 +537,13 @@ fn test_rate_organization_average() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -510,11 +554,11 @@ fn test_rate_organization_average() {
         &vec![&env],
     );
 
-    let rater1 = Address::generate(&env);
-    let rater2 = Address::generate(&env);
+    let request1 = setup_fulfilled_request(&env, &owner, &requests_client);
+    let request2 = setup_fulfilled_request(&env, &owner, &requests_client);
 
-    client.rate_organization(&rater1, &owner, &4, &1_u64);
-    client.rate_organization(&rater2, &owner, &2, &2_u64);
+    client.rate_organization(&owner, &owner, &4, &request1);
+    client.rate_organization(&owner, &owner, &2, &request2);
 
     let org = client.get_organization(&owner).unwrap();
     assert_eq!(org.total_ratings, 2);
@@ -529,8 +573,13 @@ fn test_rate_organization_invalid_rating_zero() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -541,8 +590,8 @@ fn test_rate_organization_invalid_rating_zero() {
         &vec![&env],
     );
 
-    let rater = Address::generate(&env);
-    let result = client.try_rate_organization(&rater, &owner, &0, &1_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+    let result = client.try_rate_organization(&owner, &owner, &0, &request_id);
     assert_eq!(result, Err(Ok(Error::InvalidRating)));
 }
 
@@ -553,8 +602,13 @@ fn test_rate_organization_invalid_rating_six() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -565,8 +619,8 @@ fn test_rate_organization_invalid_rating_six() {
         &vec![&env],
     );
 
-    let rater = Address::generate(&env);
-    let result = client.try_rate_organization(&rater, &owner, &6, &1_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+    let result = client.try_rate_organization(&owner, &owner, &6, &request_id);
     assert_eq!(result, Err(Ok(Error::InvalidRating)));
 }
 
@@ -577,8 +631,13 @@ fn test_rate_organization_duplicate_prevented() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -589,10 +648,10 @@ fn test_rate_organization_duplicate_prevented() {
         &vec![&env],
     );
 
-    let rater = Address::generate(&env);
-    client.rate_organization(&rater, &owner, &5, &1_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+    client.rate_organization(&owner, &owner, &5, &request_id);
 
-    let result = client.try_rate_organization(&rater, &owner, &3, &1_u64);
+    let result = client.try_rate_organization(&owner, &owner, &3, &request_id);
     assert_eq!(result, Err(Ok(Error::AlreadyRated)));
 }
 
@@ -603,11 +662,16 @@ fn test_rate_organization_not_found() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
-    let rater = Address::generate(&env);
     let ghost = Address::generate(&env);
 
-    let result = client.try_rate_organization(&rater, &ghost, &3, &1_u64);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.set_requests_contract(&admin, &requests_id);
+    requests_client.initialize(&admin, &requests_id);
+    let result = client.try_rate_organization(&admin, &ghost, &3, &1_u64);
     assert_eq!(result, Err(Ok(Error::OrganizationNotFound)));
 }
 
@@ -618,8 +682,13 @@ fn test_rating_record_stored() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -630,12 +699,12 @@ fn test_rating_record_stored() {
         &vec![&env],
     );
 
-    let rater = Address::generate(&env);
-    client.rate_organization(&rater, &owner, &5, &42_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+    client.rate_organization(&owner, &owner, &5, &request_id);
 
-    let rec = client.get_rating_record(&42_u64, &rater).unwrap();
+    let rec = client.get_rating_record(&request_id, &owner).unwrap();
     assert_eq!(rec.rating, 5);
-    assert_eq!(rec.request_id, 42);
+    assert_eq!(rec.request_id, request_id);
 }
 
 #[test]
@@ -645,8 +714,13 @@ fn test_get_organization_rating() {
 
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
 
     let owner = Address::generate(&env);
+    client.initialize(&owner);
+    client.set_requests_contract(&owner, &requests_id);
+    requests_client.initialize(&owner, &requests_id);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
     client.register_organization(
         &owner,
@@ -659,8 +733,8 @@ fn test_get_organization_rating() {
 
     assert_eq!(client.get_organization_rating(&owner), 0);
 
-    let rater = Address::generate(&env);
-    client.rate_organization(&rater, &owner, &5, &1_u64);
+    let request_id = setup_fulfilled_request(&env, &owner, &requests_client);
+    client.rate_organization(&owner, &owner, &5, &request_id);
     assert_eq!(client.get_organization_rating(&owner), 5);
 }
 

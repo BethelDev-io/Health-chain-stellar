@@ -6,6 +6,92 @@ use soroban_sdk::{
     String, Vec,
 };
 
+mod verification;
+
+mod request_client {
+    use soroban_sdk::{contractclient, contracttype, Address, Env, String, Vec};
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum RequestStatus {
+        Pending,
+        Approved,
+        InProgress,
+        Fulfilled,
+        Cancelled,
+        Rejected,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum BloodType {
+        APositive,
+        ANegative,
+        BPositive,
+        BNegative,
+        ABPositive,
+        ABNegative,
+        OPositive,
+        ONegative,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum BloodComponent {
+        WholeBlood,
+        RedCells,
+        Plasma,
+        Platelets,
+        Cryoprecipitate,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub enum Urgency {
+        Critical,
+        Urgent,
+        Routine,
+        Scheduled,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub struct RequestHistoryEntry {
+        pub previous_status: RequestStatus,
+        pub is_initial_transition: bool,
+        pub new_status: RequestStatus,
+        pub actor: Address,
+        pub reason: String,
+        pub fulfilled_delta_ml: u32,
+        pub released_reservation: bool,
+        pub timestamp: u64,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[contracttype]
+    pub struct BloodRequest {
+        pub id: u64,
+        pub hospital_id: Address,
+        pub blood_type: BloodType,
+        pub component: BloodComponent,
+        pub quantity_ml: u32,
+        pub urgency: Urgency,
+        pub created_timestamp: u64,
+        pub required_by_timestamp: u64,
+        pub status: RequestStatus,
+        pub assigned_units: Vec<u64>,
+        pub fulfilled_quantity_ml: u32,
+        pub reservation_id: Option<u64>,
+        pub history: Vec<RequestHistoryEntry>,
+    }
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request(env: Env, request_id: u64) -> BloodRequest;
+    }
+}
+
 /// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
 const TTL_THRESHOLD: u32 = 518_400; // ~30 days
 const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
@@ -644,44 +730,9 @@ impl IdentityContract {
 
     /// Verify an organization (admin only)
     pub fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<(), Error> {
-        admin.require_auth();
-        Self::require_not_paused(&env)?;
-        Self::require_role(&env, &admin, Role::Admin)?;
-
-        let org_key = DataKey::Org(org_id.clone());
-        let mut organization: Organization = env
-            .storage()
-            .persistent()
-            .get(&org_key)
-            .ok_or(Error::OrganizationNotFound)?;
-
-        if organization.verified {
-            return Err(Error::AlreadyVerified);
-        }
-
-        // Update organization
-        organization.verified = true;
-        organization.verified_timestamp = Some(env.ledger().timestamp());
-        env.storage().persistent().set(&org_key, &organization);
-        env.storage()
-            .persistent()
-            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        // Store verifier
-        let verifier_key = DataKey::OrgVerifier(org_id.clone());
-        env.storage().persistent().set(&verifier_key, &admin);
-        env.storage()
-            .persistent()
-            .extend_ttl(&verifier_key, TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        // Emit event
-        OrgVerified {
-            org_id,
-            admin,
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
-
+        <verification::VerificationImpl as verification::VerificationTrait>::verify_organization(
+            env, admin, org_id,
+        )?;
         Ok(())
     }
 
@@ -692,38 +743,9 @@ impl IdentityContract {
         org_id: Address,
         reason: String,
     ) -> Result<(), Error> {
-        admin.require_auth();
-        Self::require_not_paused(&env)?;
-        Self::require_role(&env, &admin, Role::Admin)?;
-
-        let org_key = DataKey::Org(org_id.clone());
-        let mut organization: Organization = env
-            .storage()
-            .persistent()
-            .get(&org_key)
-            .ok_or(Error::OrganizationNotFound)?;
-
-        if !organization.verified {
-            return Err(Error::AlreadyUnverified);
-        }
-
-        organization.verified = false;
-        organization.verified_timestamp = None;
-        env.storage().persistent().set(&org_key, &organization);
-        env.storage()
-            .persistent()
-            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        // Store reason
-        let reason_key = DataKey::OrgUnverifyReason(org_id.clone());
-        env.storage().persistent().set(&reason_key, &reason);
-        env.storage()
-            .persistent()
-            .extend_ttl(&reason_key, TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        // Emit event
-        OrgUnverified { org_id, reason }.publish(&env);
-
+        <verification::VerificationImpl as verification::VerificationTrait>::unverify_organization(
+            env, admin, org_id, reason,
+        )?;
         Ok(())
     }
 
@@ -746,7 +768,6 @@ impl IdentityContract {
             return Err(Error::InvalidRating);
         }
 
-        // Verify interaction (stub — wire to request contract in production)
         Self::verify_interaction(env.clone(), rater.clone(), org_id.clone(), request_id)?;
 
         // Prevent duplicate rating for this request
@@ -809,19 +830,39 @@ impl IdentityContract {
             .get(&DataKey::RatingRecord(request_id, rater))
     }
 
-    /// Verify that `rater` had a completed interaction with `org_id` on `request_id`.
-    /// Requires a requests contract to be configured via set_requests_contract(); fails closed otherwise.
+    /// Verify that `rater` had a completed interaction for `request_id`.
+    /// Fails closed unless the configured requests contract confirms the request
+    /// belongs to the rater and is fully completed.
     fn verify_interaction(
         env: Env,
-        _rater: Address,
+        rater: Address,
         _org_id: Address,
-        _request_id: u64,
+        request_id: u64,
     ) -> Result<(), Error> {
-        // Keep the validation lean for the current harness: the organization must exist,
-        // but rating is not coupled to the external requests contract yet.
         if !env.storage().persistent().has(&DataKey::Org(_org_id)) {
             return Err(Error::OrganizationNotFound);
         }
+
+        let requests_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequestsContract)
+            .ok_or(Error::Unauthorized)?;
+
+        let requests_client = request_client::RequestContractClient::new(&env, &requests_contract);
+        let request = requests_client
+            .try_get_request(&request_id)
+            .map_err(|_| Error::Unauthorized)?
+            .map_err(|_| Error::Unauthorized)?;
+
+        if request.hospital_id != rater {
+            return Err(Error::Unauthorized);
+        }
+
+        if request.status != request_client::RequestStatus::Fulfilled {
+            return Err(Error::Unauthorized);
+        }
+
         Ok(())
     }
 
