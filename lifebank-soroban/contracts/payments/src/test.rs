@@ -20,7 +20,9 @@ fn setup<'a>() -> (Env, Address, RequestContractClient<'a>, Address) {
     requests_client.authorize_hospital(&hospital);
 
     env.as_contract(&payment_contract_id, || {
-        env.storage().instance().set(&REQ_CONTRACT, &requests_contract_id);
+        env.storage()
+            .instance()
+            .set(&REQ_CONTRACT, &requests_contract_id);
     });
 
     (env, payment_contract_id, requests_client, hospital)
@@ -183,8 +185,7 @@ fn test_get_payment_by_request_finds_correct_payment() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
     let (_id1, _r1, _, _) = make_payment(&env, &client, &requests_client, &hospital, 100);
-    let (id2, request_id2, _, _) =
-        make_payment(&env, &client, &requests_client, &hospital, 200);
+    let (id2, request_id2, _, _) = make_payment(&env, &client, &requests_client, &hospital, 200);
     let (_id3, _r3, _, _) = make_payment(&env, &client, &requests_client, &hospital, 300);
 
     let p = client.get_payment_by_request(&request_id2);
@@ -208,8 +209,7 @@ fn test_create_payment_rejects_duplicate_request_id() {
     let (env, cid, requests_client, hospital) = setup();
     let client = PaymentContractClient::new(&env, &cid);
     // First payment for request 42 succeeds.
-    let (_id1, request_id, _, _) =
-        make_payment(&env, &client, &requests_client, &hospital, 500);
+    let (_id1, request_id, _, _) = make_payment(&env, &client, &requests_client, &hospital, 500);
     // Second payment for the same request must be rejected.
     let payer = Address::generate(&env);
     let payee = Address::generate(&env);

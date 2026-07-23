@@ -283,7 +283,9 @@ impl VerificationTrait for VerificationImpl {
 
         for i in 0..org_ids.len() {
             let org_id = org_ids.get(i).unwrap();
-            if Self::unverify_organization(env.clone(), admin.clone(), org_id, reason.clone()).is_ok() {
+            if Self::unverify_organization(env.clone(), admin.clone(), org_id, reason.clone())
+                .is_ok()
+            {
                 revoked_count += 1;
             }
         }
