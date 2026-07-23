@@ -236,7 +236,7 @@ pub struct IdentityContract;
 
 impl IdentityContract {
     /// Check whether an address has a given role.
-    fn has_role(env: Env, account: Address, role: Role) -> bool {
+    fn has_role_internal(env: Env, account: Address, role: Role) -> bool {
         let key = DataKey::AddressRoles(account);
         let roles: Vec<RoleGrant> = env
             .storage()
@@ -518,9 +518,14 @@ impl IdentityContract {
         env.storage().persistent().get(&DataKey::Org(org_id))
     }
 
+    /// Check if an address has a given role
+    pub fn has_role(env: Env, account: Address, role: Role) -> bool {
+        Self::has_role_internal(env, account, role)
+    }
+
     /// Require that an address has a given role, return Unauthorized error if not
     fn require_role(env: &Env, account: &Address, role: Role) -> Result<(), Error> {
-        if Self::has_role(env.clone(), account.clone(), role) {
+        if Self::has_role_internal(env.clone(), account.clone(), role) {
             Ok(())
         } else {
             Err(Error::Unauthorized)
@@ -1023,10 +1028,11 @@ impl IdentityContract {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), contract)]
+#[cfg(test)]
+#[contract]
 pub struct AccessControlContract;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 #[contractimpl]
 impl AccessControlContract {
     /// Initialize the contract with an administrator
