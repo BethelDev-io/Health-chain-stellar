@@ -234,6 +234,24 @@ pub enum DataKey {
 #[contract]
 pub struct IdentityContract;
 
+impl IdentityContract {
+    /// Check whether an address has a given role.
+    fn has_role(env: Env, account: Address, role: Role) -> bool {
+        let key = DataKey::AddressRoles(account);
+        let roles: Vec<RoleGrant> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..roles.len() {
+            if roles.get(i).unwrap().role == role {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[contractimpl]
 impl IdentityContract {
     /// Initialize the contract with an admin
@@ -498,22 +516,6 @@ impl IdentityContract {
     /// Get organization by ID
     pub fn get_organization(env: Env, org_id: Address) -> Option<Organization> {
         env.storage().persistent().get(&DataKey::Org(org_id))
-    }
-
-    /// Check if an address has a given role
-    pub fn has_role(env: Env, account: Address, role: Role) -> bool {
-        let key = DataKey::AddressRoles(account);
-        let roles: Vec<RoleGrant> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env));
-        for i in 0..roles.len() {
-            if roles.get(i).unwrap().role == role {
-                return true;
-            }
-        }
-        false
     }
 
     /// Require that an address has a given role, return Unauthorized error if not
@@ -1021,9 +1023,10 @@ impl IdentityContract {
     }
 }
 
-#[contract]
+#[cfg_attr(not(target_arch = "wasm32"), contract)]
 pub struct AccessControlContract;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[contractimpl]
 impl AccessControlContract {
     /// Initialize the contract with an administrator
