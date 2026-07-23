@@ -138,6 +138,12 @@ pub struct BadgeAwarded {
     pub admin: Address,
 }
 
+#[contractevent(topics = ["badge_revoked"], data_format = "vec")]
+pub struct BadgeRevoked {
+    pub org_id: Address,
+    pub badge_type: BadgeType,
+}
+
 #[contractevent(topics = ["delivery_proof"], data_format = "vec")]
 pub struct DeliveryProofRecorded {
     pub request_id: u64,
@@ -883,10 +889,7 @@ impl IdentityContract {
         env.storage().persistent().set(&badges_key, &new_badges);
         env.storage().persistent().extend_ttl(&badges_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
-        env.events().publish(
-            (symbol_short!("badge"), symbol_short!("revoked")),
-            (org_id, badge_type),
-        );
+        BadgeRevoked { org_id, badge_type }.publish(&env);
 
         Ok(())
     }
