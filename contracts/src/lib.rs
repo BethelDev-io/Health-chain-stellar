@@ -2714,6 +2714,10 @@ impl HealthChainContract {
             .ok_or(Error::Unauthorized)?;
         admin.require_auth();
 
+        if timeout_secs == 0 || timeout_secs > MAX_DISPUTE_TIMEOUT_SECS {
+            return Err(Error::InvalidExpiration);
+        }
+
         env.storage()
             .instance()
             .set(&DISPUTE_TIMEOUT, &timeout_secs);
@@ -2902,7 +2906,11 @@ impl HealthChainContract {
             raised_at: env.ledger().timestamp(),
             resolved_at: None,
         };
-        let dispute_deadline = env.ledger().timestamp() + Self::get_dispute_timeout(env.clone());
+        let dispute_deadline = env
+            .ledger()
+            .timestamp()
+            .checked_add(Self::get_dispute_timeout(env.clone()))
+            .ok_or(Error::ArithmeticError)?;
         let metadata = DisputeMetadata {
             dispute_id,
             dispute_deadline,

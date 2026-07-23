@@ -1,6 +1,7 @@
 use soroban_sdk::{contracttype, Address, Bytes, String, Symbol, Vec};
 
 pub const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 72 * 60 * 60;
+pub const MAX_DISPUTE_TIMEOUT_SECS: u64 = 30 * 24 * 60 * 60;
 pub const HIGH_VALUE_THRESHOLD: i128 = 10_000;
 
 /// **Dispute evidence (beyond `Symbol` limits).**
