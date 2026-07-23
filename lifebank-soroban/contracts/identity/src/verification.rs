@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{DataKey, Error, Organization, OrgUnverified, OrgVerified};
+use crate::{DataKey, Error, OrgUnverified, OrgVerified, Organization};
 
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
