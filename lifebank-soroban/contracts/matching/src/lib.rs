@@ -191,7 +191,7 @@ impl MatchingContract {
                 .unwrap_or(Vec::new(&env));
 
             for j in 0..unit_ids.len() {
-                if candidates.len() >= MAX_MATCH_CANDIDATES {
+                if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
                     break;
                 }
                 let uid = unit_ids.get(j).unwrap();
@@ -199,7 +199,7 @@ impl MatchingContract {
                     candidates.push_back(unit);
                 }
             }
-            if candidates.len() >= MAX_MATCH_CANDIDATES {
+            if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
                 break;
             }
         }

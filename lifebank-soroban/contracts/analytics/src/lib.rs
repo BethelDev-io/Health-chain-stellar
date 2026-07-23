@@ -48,19 +48,8 @@ fn require_admin(env: &Env) -> Result<AnalyticsConfig, AnalyticsError> {
 
 fn require_authorized_caller(env: &Env) -> Result<AnalyticsConfig, AnalyticsError> {
     let cfg = require_initialized(env)?;
-    let caller = env.invoker();
-    
-    // Allow admin or any authorized domain contract
-    if caller == cfg.admin 
-        || caller == cfg.inventory_contract
-        || caller == cfg.requests_contract
-        || caller == cfg.payments_contract
-        || caller == cfg.reputation_contract
-    {
-        Ok(cfg)
-    } else {
-        Err(AnalyticsError::Unauthorized)
-    }
+    cfg.admin.require_auth();
+    Ok(cfg)
 }
 
 fn current_period_index(env: &Env, duration_secs: u64) -> u64 {

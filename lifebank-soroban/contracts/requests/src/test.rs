@@ -287,7 +287,7 @@ fn test_partial_fulfillment_restricted_to_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #309)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_cancel_requires_reason() {
     let (env, client, _contract_id, _admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
@@ -304,7 +304,7 @@ fn test_cancel_requires_reason() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #309)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_reject_requires_reason() {
     let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
     let hospital = authorize_hospital(&env, &client);
@@ -381,4 +381,3 @@ fn test_request_history_captures_transition_rationale() {
         String::from_str(&env, "Hospital no longer needs remaining units")
     );
 }
-

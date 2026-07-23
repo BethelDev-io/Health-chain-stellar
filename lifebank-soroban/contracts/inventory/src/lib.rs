@@ -8,7 +8,9 @@ mod types;
 mod validation;
 
 use crate::error::ContractError;
-use crate::types::{is_valid_transition, BloodStatus, BloodType, BloodUnit, DataKey, Reservation, Role};
+use crate::types::{is_valid_transition, BloodStatus, BloodUnit, DataKey, Reservation, Role};
+
+pub use crate::types::BloodType;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Vec};
 
@@ -405,7 +407,7 @@ impl InventoryContract {
         let role = Self::get_role(&env, &authorized_by);
         Self::assert_can_transition(&role, &new_status)?;
 
-        let admin = storage::get_admin(&env);
+        let _admin = storage::get_admin(&env);
         if role != Role::Admin && authorized_by != blood_unit.bank_id {
             return Err(ContractError::Unauthorized);
         }

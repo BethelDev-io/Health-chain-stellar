@@ -296,9 +296,9 @@ fn test_verify_organization() {
     let events = env.events().all();
     assert!(!events.is_empty());
     let (_, topics, _) = events.last().unwrap();
-    let version_topic: Symbol =
+    let event_topic: Symbol =
         TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
-    assert_eq!(version_topic, symbol_short!("v1"));
+    assert_eq!(event_topic, Symbol::new(&env, "org_verified"));
 
     let org = client.get_organization(&org_id).unwrap();
     assert_eq!(org.verified, true);
@@ -420,9 +420,9 @@ fn test_unverify_organization() {
     let events = env.events().all();
     assert!(!events.is_empty());
     let (_, topics, _) = events.last().unwrap();
-    let version_topic: Symbol =
+    let event_topic: Symbol =
         TryFromVal::try_from_val(&env, &topics.get(topics.len() - 1).unwrap()).unwrap();
-    assert_eq!(version_topic, symbol_short!("v1"));
+    assert_eq!(event_topic, Symbol::new(&env, "org_unverified"));
 
     let org = client.get_organization(&org_id).unwrap();
     assert_eq!(org.verified, false);

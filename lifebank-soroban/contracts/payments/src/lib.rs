@@ -140,7 +140,7 @@ pub enum Error {
     /// Vesting end timestamp must be strictly greater than cliff timestamp.
     InvalidVestingSchedule = 518,
     /// Arithmetic overflow detected in running totals.
-    Overflow = 518,
+    Overflow = 519,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────

@@ -207,8 +207,10 @@ fn test_terminal_payment_does_not_block_new_active_payment_for_different_request
     // Payments for distinct request IDs must never interfere.
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id1, payer1, _) = make_payment(&env, &client, 100, 200);
-    client.update_status(&id1, &PaymentStatus::Refunded, &payer1);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+    let (id1, _, _) = make_payment(&env, &client, 100, 200);
+    client.update_status(&id1, &PaymentStatus::Refunded, &admin);
 
     // A payment for a different request must still be accepted.
     let (id2, _, _) = make_payment(&env, &client, 101, 300);
@@ -310,12 +312,14 @@ fn test_get_payments_by_payee_pagination() {
 fn test_get_payments_by_status_filters_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
     let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
     let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300);
 
-    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
-    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
+    client.update_status(&id1, &PaymentStatus::Locked, &admin);
+    client.update_status(&id2, &PaymentStatus::Locked, &admin);
 
     let locked = client.get_payments_by_status(&PaymentStatus::Locked, &0u32, &20u32);
     assert_eq!(locked.items.len(), 2);
@@ -339,9 +343,11 @@ fn test_get_payments_by_status_empty_when_none_match() {
 fn test_get_payments_by_status_pagination() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
     for i in 1u64..=5 {
-        let (id, payer, _) = make_payment(&env, &client, i, 100);
-        client.update_status(&id, &PaymentStatus::Refunded, &payer);
+        let (id, _, _) = make_payment(&env, &client, i, 100);
+        client.update_status(&id, &PaymentStatus::Refunded, &admin);
     }
 
     let page0 = client.get_payments_by_status(&PaymentStatus::Refunded, &0u32, &3u32);
@@ -371,6 +377,8 @@ fn test_statistics_empty_when_no_payments() {
 fn test_statistics_counts_and_totals_correctly() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
 
     let (id1, payer1, _) = make_payment(&env, &client, 1, 1000);
     let (id2, payer2, _) = make_payment(&env, &client, 2, 2000);
@@ -378,10 +386,10 @@ fn test_statistics_counts_and_totals_correctly() {
     let (id4, payer4, _) = make_payment(&env, &client, 4, 750);
     make_payment(&env, &client, 5, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Locked, &payer1);
-    client.update_status(&id2, &PaymentStatus::Locked, &payer2);
-    client.update_status(&id3, &PaymentStatus::Released, &payer3);
-    client.update_status(&id4, &PaymentStatus::Refunded, &payer4);
+    client.update_status(&id1, &PaymentStatus::Locked, &admin);
+    client.update_status(&id2, &PaymentStatus::Locked, &admin);
+    client.update_status(&id3, &PaymentStatus::Released, &admin);
+    client.update_status(&id4, &PaymentStatus::Refunded, &admin);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 2);
@@ -396,12 +404,14 @@ fn test_statistics_counts_and_totals_correctly() {
 fn test_statistics_ignores_pending_cancelled_disputed() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
     let (id1, payer1, _) = make_payment(&env, &client, 1, 100);
     let (id2, payer2, _) = make_payment(&env, &client, 2, 200);
     make_payment(&env, &client, 3, 300); // stays Pending
 
-    client.update_status(&id1, &PaymentStatus::Cancelled, &payer1);
-    client.update_status(&id2, &PaymentStatus::Disputed, &payer2);
+    client.update_status(&id1, &PaymentStatus::Cancelled, &admin);
+    client.update_status(&id2, &PaymentStatus::Disputed, &admin);
 
     let stats = client.get_payment_statistics();
     assert_eq!(stats.count_locked, 0);
@@ -473,13 +483,15 @@ fn test_timeline_unknown_request_returns_empty() {
 fn test_update_status_changes_payment_status() {
     let (env, cid) = setup();
     let client = PaymentContractClient::new(&env, &cid);
-    let (id, payer, _) = make_payment(&env, &client, 1, 500);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+    let (id, _, _) = make_payment(&env, &client, 1, 500);
 
-    client.update_status(&id, &PaymentStatus::Locked, &payer);
+    client.update_status(&id, &PaymentStatus::Locked, &admin);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Locked);
 
-    client.update_status(&id, &PaymentStatus::Released, &payer);
+    client.update_status(&id, &PaymentStatus::Released, &admin);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Released);
 }
@@ -895,6 +907,7 @@ fn test_release_escrow_transfers_tokens_to_payee() {
     assert_eq!(token_client.balance(&cid), 2_000);
     assert_eq!(token_client.balance(&payee), 0);
 
+    client.confirm_receipt(&payment_id, &hospital);
     client.release_escrow(&admin, &payment_id);
 
     assert_eq!(token_client.balance(&cid), 0, "Contract should have no tokens after release");

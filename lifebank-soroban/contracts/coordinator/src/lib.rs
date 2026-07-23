@@ -244,19 +244,19 @@ fn get_admin(env: &Env) -> Result<Address, CoordinatorError> {
 
 fn load_workflow(env: &Env, request_id: u64) -> Option<WorkflowRecord> {
     const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
-    
     let key = DataKey::Workflow(request_id);
-    
-    // Extend TTL on every read
-    env.storage().persistent().extend_ttl(
-        &key,
-        WORKFLOW_TTL_LEDGERS,
-        WORKFLOW_TTL_LEDGERS,
-    );
-    
-    env.storage()
-        .persistent()
-        .get(&key)
+
+    let workflow = env.storage().persistent().get(&key);
+    if workflow.is_some() {
+        // Extend TTL only after confirming the workflow exists.
+        env.storage().persistent().extend_ttl(
+            &key,
+            WORKFLOW_TTL_LEDGERS,
+            WORKFLOW_TTL_LEDGERS,
+        );
+    }
+
+    workflow
 }
 
 fn save_workflow(env: &Env, wf: &WorkflowRecord) {

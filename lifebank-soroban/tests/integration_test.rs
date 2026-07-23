@@ -21,7 +21,7 @@ use soroban_sdk::{
 };
 
 use coordinator_contract::{
-    BloodRequest, BloodStatus, BloodUnit, CoordinatorContract, CoordinatorContractClient,
+    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract, CoordinatorContractClient,
     CoordinatorError, Payment, PaymentStatus, RequestStatus, WorkflowRecord, WorkflowStatus,
 };
 
@@ -92,6 +92,7 @@ impl MockInventoryContract {
             &BloodUnit {
                 id,
                 status: BloodStatus::Available,
+                blood_type: coordinator_contract::BloodType::OPositive,
             },
         );
         id
@@ -277,7 +278,7 @@ fn test_full_allocation_to_delivery_workflow() {
 
     // ── Step 1: allocate_units ───────────────────────────────────────────────
     h.coord
-        .allocate_units(&request_id, &units, &payment_id, &h.admin);
+        .allocate_units(&request_id, &units, &payment_id, &h.admin, &BloodType::OPositive);
 
     // Workflow record should be Allocated.
     let wf: WorkflowRecord = h.coord.get_workflow(&request_id);
@@ -309,7 +310,7 @@ fn test_full_allocation_to_delivery_workflow() {
     );
 
     // ── Step 2: confirm_delivery ─────────────────────────────────────────────
-    h.coord.confirm_delivery(&request_id, &h.admin);
+    h.coord.confirm_delivery(&request_id, &h.admin, &String::from_str(&h.env, "facility-a"));
 
     let wf: WorkflowRecord = h.coord.get_workflow(&request_id);
     assert_eq!(
@@ -379,7 +380,7 @@ fn test_rollback_releases_inventory_and_refunds_payment() {
 
     // Allocate first so there is a workflow record to roll back.
     h.coord
-        .allocate_units(&request_id, &units, &payment_id, &h.admin);
+        .allocate_units(&request_id, &units, &payment_id, &h.admin, &BloodType::OPositive);
 
     assert_eq!(get_unit(&h, unit_a).status, BloodStatus::Reserved);
     assert_eq!(get_unit(&h, unit_b).status, BloodStatus::Reserved);
@@ -440,7 +441,7 @@ fn test_rollback_with_pending_payment_does_not_refund() {
         .seed_payment(&request_id, &PaymentStatus::Pending);
 
     h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
+        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin, &BloodType::OPositive);
 
     assert_eq!(get_unit(&h, unit_id).status, BloodStatus::Reserved);
     assert_eq!(
@@ -483,7 +484,7 @@ fn test_settle_without_confirm_delivery_is_rejected() {
     let payment_id = seed_locked_payment(&h, request_id);
 
     h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
+        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin, &BloodType::OPositive);
 
     // Skip confirm_delivery — settle must fail.
     let result = h.coord.try_settle_payment(&request_id, &h.admin);
@@ -512,8 +513,8 @@ fn test_rollback_after_settlement_is_rejected() {
     let payment_id = seed_locked_payment(&h, request_id);
 
     h.coord
-        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin);
-    h.coord.confirm_delivery(&request_id, &h.admin);
+        .allocate_units(&request_id, &vec![&h.env, unit_id], &payment_id, &h.admin, &BloodType::OPositive);
+    h.coord.confirm_delivery(&request_id, &h.admin, &String::from_str(&h.env, "facility-b"));
     h.coord.settle_payment(&request_id, &h.admin);
 
     let result = h.coord.try_rollback(&request_id);
