@@ -82,16 +82,16 @@ pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
         return true;
     }
     use BloodType::*;
-    match (donor, recipient) {
-        (OPositive,  OPositive | APositive | BPositive | ABPositive) => true,
-        (ANegative,  ANegative | APositive | ABNegative | ABPositive) => true,
-        (APositive,  APositive | ABPositive) => true,
-        (BNegative,  BNegative | BPositive | ABNegative | ABPositive) => true,
-        (BPositive,  BPositive | ABPositive) => true,
-        (ABNegative, ABNegative | ABPositive) => true,
-        (ABPositive, ABPositive) => true,
-        _ => false,
-    }
+    matches!(
+        (donor, recipient),
+        (OPositive, OPositive | APositive | BPositive | ABPositive)
+            | (ANegative, ANegative | APositive | ABNegative | ABPositive)
+            | (APositive, APositive | ABPositive)
+            | (BNegative, BNegative | BPositive | ABNegative | ABPositive)
+            | (BPositive, BPositive | ABPositive)
+            | (ABNegative, ABNegative | ABPositive)
+            | (ABPositive, ABPositive)
+    )
 }
 
 // ---------------------------------------------------------------------------

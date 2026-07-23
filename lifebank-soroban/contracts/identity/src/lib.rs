@@ -351,7 +351,7 @@ impl IdentityContract {
         owner.require_auth();
         Self::require_not_paused(&env)?;
 
-        if name.len() == 0 || license_number.len() == 0 {
+        if name.is_empty() || license_number.is_empty() {
             return Err(Error::InvalidInput);
         }
 
@@ -707,7 +707,7 @@ impl IdentityContract {
         rater.require_auth();
         Self::require_not_paused(&env)?;
 
-        if rating < 1 || rating > 5 {
+        if !(1..=5).contains(&rating) {
             return Err(Error::InvalidRating);
         }
 

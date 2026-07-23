@@ -750,7 +750,7 @@ impl PaymentContract {
         let token_client = token::Client::new(&env, &token);
         // Transfer before persisting the escrow payment. If the transfer fails,
         // the transaction aborts and no payment record is written.
-        token_client.transfer(&hospital, &env.current_contract_address(), &amount);
+        token_client.transfer(&hospital, env.current_contract_address(), &amount);
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -1082,7 +1082,7 @@ impl PaymentContract {
         offset: u32,
         limit: u32,
     ) -> Vec<Payment> {
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
         let ids: Vec<u64> = env
             .storage()
             .persistent()
@@ -1107,6 +1107,7 @@ impl PaymentContract {
         get_counter(&env)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pledge(
         env: Env,
         donor: Address,

@@ -49,17 +49,17 @@ pub enum BloodType {
 impl BloodType {
     pub fn can_donate_to(&self, recipient: &BloodType) -> bool {
         use BloodType::*;
-        match (self, recipient) {
-            (ONegative, _) => true,
-            (OPositive, APositive | BPositive | ABPositive | OPositive) => true,
-            (ANegative, APositive | ANegative | ABPositive | ABNegative) => true,
-            (APositive, APositive | ABPositive) => true,
-            (BNegative, BPositive | BNegative | ABPositive | ABNegative) => true,
-            (BPositive, BPositive | ABPositive) => true,
-            (ABNegative, ABPositive | ABNegative) => true,
-            (ABPositive, ABPositive) => true,
-            _ => false,
-        }
+        matches!(
+            (self, recipient),
+            (ONegative, _)
+                | (OPositive, APositive | BPositive | ABPositive | OPositive)
+                | (ANegative, APositive | ANegative | ABPositive | ABNegative)
+                | (APositive, APositive | ABPositive)
+                | (BNegative, BPositive | BNegative | ABPositive | ABNegative)
+                | (BPositive, BPositive | ABPositive)
+                | (ABNegative, ABPositive | ABNegative)
+                | (ABPositive, ABPositive)
+        )
     }
 }
 

@@ -206,7 +206,6 @@ impl TemperatureContract {
     /// Set threshold immediately (legacy method - kept for backward compatibility)
     ///
     /// WARNING: This bypasses governance. Consider using propose_threshold_change instead.
-
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();

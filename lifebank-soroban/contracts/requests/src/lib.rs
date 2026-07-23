@@ -38,6 +38,7 @@ pub struct RequestContract;
 
 #[contractimpl]
 impl RequestContract {
+    #[allow(clippy::too_many_arguments)]
     fn append_history(
         env: &Env,
         request: &mut BloodRequest,
@@ -62,7 +63,7 @@ impl RequestContract {
     }
 
     fn ensure_non_empty_reason(reason: &String) -> Result<(), ContractError> {
-        if reason.len() == 0 {
+        if reason.is_empty() {
             Err(ContractError::InvalidReason)
         } else {
             Ok(())
