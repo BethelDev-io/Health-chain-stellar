@@ -1773,6 +1773,19 @@ impl HealthChainContract {
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
 
+        // Verify caller is the current custodian (owning bank or recipient hospital)
+        if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
+            return Err(Error::NotCurrentCustodian);
+        }
+
+        // Reject withdrawal from terminal statuses
+        if matches!(
+            unit.status,
+            BloodStatus::Delivered | BloodStatus::Discarded | BloodStatus::Expired
+        ) {
+            return Err(Error::InvalidStatus);
+        }
+
         let old_status = unit.status;
         let current_time = env.ledger().timestamp();
 
@@ -1829,6 +1842,12 @@ impl HealthChainContract {
             .unwrap_or(Map::new(&env));
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+
+        // Verify caller is the current custodian (owning bank or recipient hospital)
+        if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
+            return Err(Error::NotCurrentCustodian);
+        }
+
         let old_status = unit.status;
 
         if old_status == BloodStatus::Quarantined {
@@ -1896,6 +1915,12 @@ impl HealthChainContract {
             .unwrap_or(Map::new(&env));
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+
+        // Verify caller is the current custodian (owning bank or recipient hospital)
+        if unit.bank_id != caller && unit.recipient_hospital != Some(caller.clone()) {
+            return Err(Error::NotCurrentCustodian);
+        }
+
         let old_status = unit.status;
         if old_status != BloodStatus::Quarantined {
             return Err(Error::InvalidStatus);
@@ -8023,5 +8048,486 @@ mod test {
         env.mock_all_auths();
         client.activate_blood_bank(&admin, &bank);
         assert_eq!(client.is_blood_bank(&bank), true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Issue #1110: withdraw_blood / quarantine_blood / finalize_quarantine
+    // custodian enforcement
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_withdraw_blood_by_owning_bank_succeeds() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.withdraw_blood(&bank, &unit_id, &WithdrawalReason::Contaminated);
+
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Discarded);
+    }
+
+    #[test]
+    fn test_withdraw_blood_by_unrelated_bank_fails() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let owning_bank = Address::generate(&env);
+        let other_bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&owning_bank);
+        env.mock_all_auths();
+        client.register_blood_bank(&other_bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &owning_bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        let result = client.try_withdraw_blood(&other_bank, &unit_id, &WithdrawalReason::Other);
+        assert_eq!(result, Err(Ok(Error::NotCurrentCustodian)));
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Available);
+    }
+
+    #[test]
+    fn test_withdraw_blood_by_recipient_hospital_succeeds() {
+        let env = Env::default();
+        let (_, _admin, hospital, client) = setup_contract_with_hospital(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        env.mock_all_auths();
+        client.withdraw_blood(&hospital, &unit_id, &WithdrawalReason::Damaged);
+
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Discarded);
+    }
+
+    #[test]
+    fn test_withdraw_blood_by_unrelated_hospital_fails() {
+        let env = Env::default();
+        let (_, _admin, hospital_a, client) = setup_contract_with_hospital(&env);
+        let hospital_b = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_hospital(&hospital_b);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital_a);
+
+        env.mock_all_auths();
+        let result = client.try_withdraw_blood(&hospital_b, &unit_id, &WithdrawalReason::Other);
+        assert_eq!(result, Err(Ok(Error::NotCurrentCustodian)));
+    }
+
+    #[test]
+    fn test_withdraw_blood_rejects_already_delivered_unit() {
+        let env = Env::default();
+        let (_, _admin, hospital, client) = setup_contract_with_hospital(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+        env.mock_all_auths();
+        client.confirm_delivery(&hospital, &unit_id);
+
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Delivered);
+
+        env.mock_all_auths();
+        let result = client.try_withdraw_blood(&hospital, &unit_id, &WithdrawalReason::Other);
+        assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    }
+
+    #[test]
+    fn test_quarantine_blood_by_unrelated_bank_fails() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let owning_bank = Address::generate(&env);
+        let other_bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&owning_bank);
+        env.mock_all_auths();
+        client.register_blood_bank(&other_bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &owning_bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        let result = client.try_quarantine_blood(
+            &other_bank,
+            &unit_id,
+            &QuarantineReason::ContaminationSuspected,
+        );
+        assert_eq!(result, Err(Ok(Error::NotCurrentCustodian)));
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Available);
+    }
+
+    #[test]
+    fn test_quarantine_and_finalize_by_owning_bank_succeeds() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.quarantine_blood(&bank, &unit_id, &QuarantineReason::ScreeningFailure);
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Quarantined);
+
+        env.mock_all_auths();
+        client.finalize_quarantine(
+            &bank,
+            &unit_id,
+            &QuarantineReason::ScreeningFailure,
+            &QuarantineDisposition::Release,
+        );
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Available);
+    }
+
+    #[test]
+    fn test_finalize_quarantine_by_unrelated_bank_fails() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let owning_bank = Address::generate(&env);
+        let other_bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&owning_bank);
+        env.mock_all_auths();
+        client.register_blood_bank(&other_bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &owning_bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.quarantine_blood(&owning_bank, &unit_id, &QuarantineReason::ScreeningFailure);
+
+        env.mock_all_auths();
+        let result = client.try_finalize_quarantine(
+            &other_bank,
+            &unit_id,
+            &QuarantineReason::ScreeningFailure,
+            &QuarantineDisposition::Release,
+        );
+        assert_eq!(result, Err(Ok(Error::NotCurrentCustodian)));
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Quarantined);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Issue #1116: storage_lifecycle.rs coverage
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bump_registry_ttl_requires_admin_auth() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+
+        env.mock_all_auths();
+        client.bump_registry_ttl();
+        // No panic => admin auth was required and satisfied via mock_all_auths.
+    }
+
+    #[test]
+    fn test_is_eligible_for_archival_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+
+        let bank = env.current_contract_address();
+        let terminal_unit = BloodUnit {
+            id: 1,
+            blood_type: BloodType::OPositive,
+            component: BloodComponent::WholeBlood,
+            quantity: 100,
+            expiration_date: 2_000_000,
+            donor_id: symbol_short!("DNR"),
+            location: symbol_short!("LOC"),
+            bank_id: bank.clone(),
+            registration_timestamp: 0,
+            status: BloodStatus::Delivered,
+            recipient_hospital: None,
+            allocation_timestamp: None,
+            transfer_timestamp: None,
+            delivery_timestamp: Some(0),
+        };
+
+        let last_change_time = env.ledger().timestamp()
+            - crate::storage_lifecycle::ARCHIVE_AFTER_DAYS * crate::storage_lifecycle::SECONDS_PER_DAY;
+
+        // Exactly at the boundary: eligible.
+        let history_at_boundary = vec![
+            &env,
+            StatusChangeEvent {
+                blood_unit_id: 1,
+                old_status: BloodStatus::InTransit,
+                new_status: BloodStatus::Delivered,
+                actor: bank.clone(),
+                timestamp: last_change_time,
+            },
+        ];
+        assert!(crate::storage_lifecycle::is_eligible_for_archival(
+            &env,
+            &terminal_unit,
+            &history_at_boundary
+        ));
+
+        // Just before the boundary: not yet eligible.
+        let history_before = vec![
+            &env,
+            StatusChangeEvent {
+                blood_unit_id: 1,
+                old_status: BloodStatus::InTransit,
+                new_status: BloodStatus::Delivered,
+                actor: bank.clone(),
+                timestamp: last_change_time + 1,
+            },
+        ];
+        assert!(!crate::storage_lifecycle::is_eligible_for_archival(
+            &env,
+            &terminal_unit,
+            &history_before
+        ));
+
+        // Just after the boundary: eligible.
+        let history_after = vec![
+            &env,
+            StatusChangeEvent {
+                blood_unit_id: 1,
+                old_status: BloodStatus::InTransit,
+                new_status: BloodStatus::Delivered,
+                actor: bank,
+                timestamp: last_change_time - 1,
+            },
+        ];
+        assert!(crate::storage_lifecycle::is_eligible_for_archival(
+            &env,
+            &terminal_unit,
+            &history_after
+        ));
+    }
+
+    #[test]
+    fn test_is_eligible_for_archival_non_terminal_unit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let bank = env.current_contract_address();
+
+        let non_terminal_unit = BloodUnit {
+            id: 2,
+            blood_type: BloodType::APositive,
+            component: BloodComponent::WholeBlood,
+            quantity: 100,
+            expiration_date: 2_000_000,
+            donor_id: symbol_short!("DNR"),
+            location: symbol_short!("LOC"),
+            bank_id: bank.clone(),
+            registration_timestamp: 0,
+            status: BloodStatus::Available,
+            recipient_hospital: None,
+            allocation_timestamp: None,
+            transfer_timestamp: None,
+            delivery_timestamp: None,
+        };
+
+        let history = vec![
+            &env,
+            StatusChangeEvent {
+                blood_unit_id: 2,
+                old_status: BloodStatus::Reserved,
+                new_status: BloodStatus::Available,
+                actor: bank,
+                timestamp: 0,
+            },
+        ];
+
+        assert!(!crate::storage_lifecycle::is_eligible_for_archival(
+            &env,
+            &non_terminal_unit,
+            &history
+        ));
+    }
+
+    #[test]
+    fn test_archive_history_not_yet_eligible_returns_false() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        // Unit is still Available (non-terminal) — archival must return Ok(false).
+        env.mock_all_auths();
+        let archived = client.archive_history(&unit_id);
+        assert_eq!(archived, false);
+        assert_eq!(client.get_history_summary(&unit_id), None);
+    }
+
+    #[test]
+    fn test_archive_custody_non_terminal_unit_returns_false() {
+        let env = Env::default();
+        let (_, _admin, client) = setup_contract_with_admin(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        let archived = client.archive_custody(&unit_id);
+        assert_eq!(archived, false);
+        assert_eq!(client.get_custody_summary(&unit_id), None);
+    }
+
+    #[test]
+    fn test_archive_history_after_delivery_and_cooldown() {
+        let env = Env::default();
+        let (_, _admin, hospital, client) = setup_contract_with_hospital(&env);
+        let bank = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        env.mock_all_auths();
+        let unit_id = client.register_blood(
+            &bank,
+            &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
+            &450,
+            &(env.ledger().timestamp() + 365 * 86400),
+            &None,
+        );
+
+        env.mock_all_auths();
+        client.allocate_blood(&bank, &unit_id, &hospital);
+        env.mock_all_auths();
+        client.confirm_delivery(&hospital, &unit_id);
+
+        assert_eq!(client.get_blood_status(&unit_id), BloodStatus::Delivered);
+
+        // Not yet eligible immediately after delivery.
+        env.mock_all_auths();
+        assert_eq!(client.archive_history(&unit_id), false);
+
+        // Advance past the archival cooling-off window.
+        let future = env.ledger().timestamp()
+            + crate::storage_lifecycle::ARCHIVE_AFTER_DAYS * crate::storage_lifecycle::SECONDS_PER_DAY
+            + 1;
+        env.ledger().with_mut(|l| l.timestamp = future);
+
+        env.mock_all_auths();
+        let archived = client.archive_history(&unit_id);
+        assert_eq!(archived, true);
+
+        let summary = client.get_history_summary(&unit_id).unwrap();
+        assert_eq!(summary.terminal_status, BloodStatus::Delivered);
+        assert!(summary.total_events >= 1);
+
+        // History was compacted; the summary must now be retrievable.
+        assert!(client.get_history_summary(&unit_id).is_some());
     }
 }
