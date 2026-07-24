@@ -282,7 +282,7 @@ pub enum DataKey {
 
     /// Index: Donor ID -> Vec<u64> (blood unit IDs)
     DonorIndex(Address),
-    
+
     /// Authorized blood bank address
     AuthorizedBank(Address),
 
@@ -502,7 +502,7 @@ mod tests {
     /// Property-style: every pair of statuses is valid iff it appears in the allowlist.
     #[test]
     fn test_transition_matrix_exhaustive_against_allowlist() {
-        use super::{is_valid_transition, ALLOWED_BLOOD_STATUS_TRANSITIONS, BloodStatus};
+        use super::{is_valid_transition, BloodStatus, ALLOWED_BLOOD_STATUS_TRANSITIONS};
         let mut allowed_set = [false; 7 * 7];
         let idx = |s: BloodStatus| match s {
             BloodStatus::Available => 0,

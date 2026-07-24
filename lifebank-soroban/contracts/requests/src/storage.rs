@@ -50,7 +50,9 @@ pub fn get_inventory_contract(env: &Env) -> Address {
 }
 
 pub fn set_request_counter(env: &Env, value: u64) {
-    env.storage().instance().set(&DataKey::RequestCounter, &value);
+    env.storage()
+        .instance()
+        .set(&DataKey::RequestCounter, &value);
 }
 
 pub fn get_request_counter(env: &Env) -> u64 {
@@ -72,7 +74,9 @@ pub fn increment_request_counter(env: &Env) -> u64 {
 pub fn authorize_hospital(env: &Env, hospital: &Address) {
     let key = DataKey::AuthorizedHospital(hospital.clone());
     env.storage().persistent().set(&key, &true);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn revoke_hospital(env: &Env, hospital: &Address) {
@@ -100,6 +104,7 @@ pub fn revoke_blood_bank(env: &Env, blood_bank: &Address) {
         .remove(&DataKey::AuthorizedBloodBank(blood_bank.clone()));
 }
 
+#[allow(dead_code)]
 pub fn is_blood_bank_authorized(env: &Env, blood_bank: &Address) -> bool {
     env.storage()
         .instance()
@@ -119,6 +124,7 @@ pub fn revoke_rider(env: &Env, rider: &Address) {
         .remove(&DataKey::AuthorizedRider(rider.clone()));
 }
 
+#[allow(dead_code)]
 pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
     env.storage()
         .instance()
@@ -129,11 +135,15 @@ pub fn is_rider_authorized(env: &Env, rider: &Address) -> bool {
 pub fn set_request(env: &Env, request: &BloodRequest) {
     let key = DataKey::Request(request.id);
     env.storage().persistent().set(&key, request);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_request(env: &Env, request_id: u64) -> Option<BloodRequest> {
-    env.storage().persistent().get(&DataKey::Request(request_id))
+    env.storage()
+        .persistent()
+        .get(&DataKey::Request(request_id))
 }
 
 pub fn set_metadata(env: &Env, metadata: &ContractMetadata) {

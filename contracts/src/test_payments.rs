@@ -13,7 +13,7 @@ use crate::{
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger},
-    vec, Address, Bytes, Env, IntoVal, Map, String, Symbol, TryFromVal,
+    vec, Address, Bytes, Env, Map, String, Symbol, TryFromVal,
 };
 
 fn default_fee_structure(env: &Env) -> FeeStructure {
@@ -521,18 +521,30 @@ fn auto_refund_after_timeout() {
     assert_eq!(client.process_expired_disputes(), 1);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    assert_eq!(last_event.0, contract_id);
+    let last_event = events.events().last().unwrap();
+    let topics = match &last_event.body {
+        soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
+        _ => panic!("unexpected contract event version"),
+    };
+    assert_eq!(topics.len(), 3);
     assert_eq!(
-        last_event.1,
-        (
-            symbol_short!("dispute"),
-            symbol_short!("refunded"),
-            symbol_short!("v1")
-        )
-            .into_val(&env)
+        Symbol::try_from_val(&env, topics.get(0).unwrap()).unwrap(),
+        symbol_short!("dispute")
     );
-    let event = crate::DisputeAutoRefundedEvent::try_from_val(&env, &last_event.2).unwrap();
+    assert_eq!(
+        Symbol::try_from_val(&env, topics.get(1).unwrap()).unwrap(),
+        symbol_short!("refunded")
+    );
+    assert_eq!(
+        Symbol::try_from_val(&env, topics.get(2).unwrap()).unwrap(),
+        symbol_short!("v1")
+    );
+    let event = match &last_event.body {
+        soroban_sdk::xdr::ContractEventBody::V0(v0) => {
+            crate::DisputeAutoRefundedEvent::try_from_val(&env, &v0.data).unwrap()
+        }
+        _ => panic!("unexpected contract event version"),
+    };
     assert_eq!(event.case_id, dispute_id);
     assert_eq!(event.payment_id, payment_id);
     assert_eq!(event.refunded_to, payer);
@@ -1011,6 +1023,61 @@ fn configure_multisig_is_admin_only_and_persists_storage() {
 }
 
 #[test]
+fn configure_multisig_clears_in_flight_pending_approvals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer_one = Address::generate(&env);
+    let signer_two = Address::generate(&env);
+    let signer_three = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    client.configure_multisig(&vec![&env, signer_one.clone(), signer_two.clone()], &2);
+    let payment_id = client.create_payment(
+        &1,
+        &payer,
+        &payee,
+        &HIGH_VALUE_THRESHOLD,
+        &asset,
+        &default_fee_structure(&env),
+        &admin,
+    );
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+    });
+
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_one);
+    client.propose_release(&payment_id, &signer_one);
+
+    // Reconfigure multisig to a different signer set, clearing pending approvals
+    client.configure_multisig(&vec![&env, signer_three.clone()], &1);
+
+    env.as_contract(&contract_id, || {
+        let approvals: Map<u64, PendingApproval> = env
+            .storage()
+            .persistent()
+            .get(&PENDING_APPROVALS)
+            .unwrap();
+        assert!(
+            approvals.is_empty(),
+            "Pending approvals should be cleared after configure_multisig"
+        );
+    });
+}
+
+#[test]
 fn test_create_payment_fails_with_tampered_fee_payload() {
     let env = Env::default();
     let (contract_id, client, admin) = setup_dispute_contract(&env);
@@ -1124,4 +1191,3 @@ fn test_fee_arithmetic_overflow_boundary() {
     assert_eq!(fee.total(), Err(PaymentError::Overflow));
     assert_eq!(fee.calculate_net_amount(1_000), Err(PaymentError::Overflow));
 }
-
