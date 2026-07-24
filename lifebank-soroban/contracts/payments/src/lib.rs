@@ -3,7 +3,7 @@
 
 use soroban_sdk::token;
 use soroban_sdk::{
-    contract, contractevent, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, Env,
     String, Vec,
 };
 
@@ -221,7 +221,9 @@ fn set_pledge_counter(env: &Env, val: u64) {
 fn store_payment(env: &Env, payment: &Payment) {
     let key = payment_key(payment.id);
     env.storage().persistent().set(&key, payment);
-    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_payment(env: &Env, id: u64) -> Option<Payment> {
@@ -231,7 +233,9 @@ fn load_payment(env: &Env, id: u64) -> Option<Payment> {
 fn store_pledge(env: &Env, pledge: &DonationPledge) {
     let key = pledge_key(pledge.id);
     env.storage().persistent().set(&key, pledge);
-    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_pledge(env: &Env, id: u64) -> Option<DonationPledge> {
@@ -245,7 +249,9 @@ fn vesting_key(donor: &Address) -> (Address, &'static str) {
 fn store_vesting(env: &Env, schedule: &VestingSchedule) {
     let key = vesting_key(&schedule.donor);
     env.storage().persistent().set(&key, schedule);
-    env.storage().persistent().extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 }
 
 fn load_vesting(env: &Env, donor: &Address) -> Option<VestingSchedule> {
@@ -311,9 +317,7 @@ fn index_by_request(env: &Env, request_id: u64, payment_id: u64) {
 /// Remove the request index entry once the payment reaches a terminal state
 /// (Released, Refunded, Cancelled) to avoid retaining stale entries.
 fn remove_from_request_index(env: &Env, request_id: u64) {
-    env.storage()
-        .persistent()
-        .remove(&req_idx_key(request_id));
+    env.storage().persistent().remove(&req_idx_key(request_id));
 }
 
 /// Persistent key for the ordered list of payment IDs associated with a request.
@@ -377,7 +381,12 @@ fn store_stats(env: &Env, stats: &PaymentStats) {
     env.storage().instance().set(&STATS_KEY, stats);
 }
 
-fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: PaymentStatus) -> Result<(), Error> {
+fn update_stats_on_transition(
+    env: &Env,
+    amount: i128,
+    old: PaymentStatus,
+    new: PaymentStatus,
+) -> Result<(), Error> {
     let mut stats = load_stats(env);
     match old {
         PaymentStatus::Locked => {
@@ -396,15 +405,24 @@ fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: 
     }
     match new {
         PaymentStatus::Locked => {
-            stats.total_locked = stats.total_locked.checked_add(amount).ok_or(Error::Overflow)?;
+            stats.total_locked = stats
+                .total_locked
+                .checked_add(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_locked += 1;
         }
         PaymentStatus::Released => {
-            stats.total_released = stats.total_released.checked_add(amount).ok_or(Error::Overflow)?;
+            stats.total_released = stats
+                .total_released
+                .checked_add(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_released += 1;
         }
         PaymentStatus::Refunded => {
-            stats.total_refunded = stats.total_refunded.checked_add(amount).ok_or(Error::Overflow)?;
+            stats.total_refunded = stats
+                .total_refunded
+                .checked_add(amount)
+                .ok_or(Error::Overflow)?;
             stats.count_refunded += 1;
         }
         _ => {}
@@ -416,25 +434,84 @@ fn update_stats_on_transition(env: &Env, amount: i128, old: PaymentStatus, new: 
 // ── Request-contract cross-contract interface (minimal) ────────────────────────
 
 mod request_client {
-    use soroban_sdk::{contractclient, contracttype, Env};
+    use soroban_sdk::{contractclient, contracttype, Address, Env, Vec};
 
     #[contracttype]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum RequestStatus {
         Pending,
         Approved,
+        InProgress,
         Fulfilled,
         Cancelled,
+        Rejected,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BloodType {
+        APositive,
+        ANegative,
+        BPositive,
+        BNegative,
+        ABPositive,
+        ABNegative,
+        OPositive,
+        ONegative,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BloodComponent {
+        WholeBlood,
+        RedCells,
+        Plasma,
+        Platelets,
+        Cryoprecipitate,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Urgency {
+        Critical,
+        Urgent,
+        Routine,
+        Scheduled,
     }
 
     #[contracttype]
     #[derive(Clone, Debug)]
     pub struct BloodRequest {
         pub id: u64,
+        pub hospital_id: Address,
+        pub blood_type: BloodType,
+        pub component: BloodComponent,
+        pub quantity_ml: u32,
+        pub urgency: Urgency,
+        pub created_timestamp: u64,
+        pub required_by_timestamp: u64,
         pub status: RequestStatus,
+        pub assigned_units: Vec<u64>,
+        pub fulfilled_quantity_ml: u32,
+        pub reservation_id: Option<u64>,
+        pub history: Vec<RequestHistoryEntry>,
+    }
+
+    #[contracttype]
+    #[derive(Clone, Debug)]
+    pub struct RequestHistoryEntry {
+        pub previous_status: RequestStatus,
+        pub is_initial_transition: bool,
+        pub new_status: RequestStatus,
+        pub actor: Address,
+        pub reason: soroban_sdk::String,
+        pub fulfilled_delta_ml: u32,
+        pub released_reservation: bool,
+        pub timestamp: u64,
     }
 
     #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
     pub trait RequestContractInterface {
         fn get_request(env: Env, request_id: u64) -> BloodRequest;
         fn update_request_status(
@@ -639,6 +716,7 @@ impl PaymentContract {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn is_admin(env: &Env, caller: &Address) -> bool {
         env.storage()
             .instance()
@@ -668,10 +746,12 @@ impl PaymentContract {
             return Err(Error::DuplicatePayment);
         }
 
-        // Validate request state if the requests contract is configured.
-        if let Some(rc) = env.storage().instance().get::<_, Address>(&REQ_CONTRACT) {
-            validate_request_payable(&env, &rc, request_id)?;
-        }
+        let rc = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&REQ_CONTRACT)
+            .ok_or(Error::RequestNotFound)?;
+        validate_request_payable(&env, &rc, request_id)?;
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -751,7 +831,7 @@ impl PaymentContract {
         let token_client = token::Client::new(&env, &token);
         // Transfer before persisting the escrow payment. If the transfer fails,
         // the transaction aborts and no payment record is written.
-        token_client.transfer(&hospital, &env.current_contract_address(), &amount);
+        token_client.transfer(&hospital, env.current_contract_address(), &amount);
 
         let id = get_counter(&env) + 1;
         set_counter(&env, id);
@@ -841,7 +921,12 @@ impl PaymentContract {
         env.storage().persistent().remove(&coord_key);
         env.storage().persistent().remove(&hosp_key);
 
-        PaymentReleased { payment_id, payee: payment.payee.clone(), amount: payment.amount }.publish(&env);
+        PaymentReleased {
+            payment_id,
+            payee: payment.payee.clone(),
+            amount: payment.amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -867,7 +952,8 @@ impl PaymentContract {
 
         // Check if coordinator has also confirmed
         let coord_key = (payment_id, "coord_ok");
-        let coordinator_confirmed: bool = env.storage().persistent().get(&coord_key).unwrap_or(false);
+        let coordinator_confirmed: bool =
+            env.storage().persistent().get(&coord_key).unwrap_or(false);
 
         if !coordinator_confirmed {
             // Hospital confirmed but waiting for coordinator
@@ -898,7 +984,12 @@ impl PaymentContract {
         env.storage().persistent().remove(&coord_key);
         env.storage().persistent().remove(&hosp_key);
 
-        PaymentReleased { payment_id, payee: payment.payee.clone(), amount: payment.amount }.publish(&env);
+        PaymentReleased {
+            payment_id,
+            payee: payment.payee.clone(),
+            amount: payment.amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -934,7 +1025,12 @@ impl PaymentContract {
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Refunded)?;
         remove_from_request_index(&env, payment.request_id);
 
-        PaymentRefunded { payment_id, payer: payment.payer.clone(), amount: payment.amount }.publish(&env);
+        PaymentRefunded {
+            payment_id,
+            payer: payment.payer.clone(),
+            amount: payment.amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -965,14 +1061,22 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, status, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, status)?;
-        if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled) {
+        if matches!(
+            status,
+            PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
+        ) {
             remove_from_request_index(&env, payment.request_id);
         }
 
         // Emit event on every status transition so off-chain indexers can stay
         // in sync without polling. Topics: ("payment", "status") so indexers can
         // filter by contract + topic pair.
-        PaymentStatusChanged { payment_id, old_status, new_status: status }.publish(&env);
+        PaymentStatusChanged {
+            payment_id,
+            old_status,
+            new_status: status,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -1000,7 +1104,12 @@ impl PaymentContract {
         remove_from_status_index(&env, old_status, payment_id);
         index_by_status(&env, PaymentStatus::Disputed, payment_id);
         update_stats_on_transition(&env, payment.amount, old_status, PaymentStatus::Disputed)?;
-        PaymentDisputed { payment_id, reason_code: dispute_reason_to_code(reason), case_id }.publish(&env);
+        PaymentDisputed {
+            payment_id,
+            reason_code: dispute_reason_to_code(reason),
+            case_id,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -1093,7 +1202,7 @@ impl PaymentContract {
         offset: u32,
         limit: u32,
     ) -> Vec<Payment> {
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
         let ids: Vec<u64> = env
             .storage()
             .persistent()
@@ -1118,6 +1227,7 @@ impl PaymentContract {
         get_counter(&env)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pledge(
         env: Env,
         donor: Address,
@@ -1229,7 +1339,13 @@ impl PaymentContract {
 
         store_vesting(&env, &schedule);
 
-        VestingCreated { donor, total_amount, cliff_timestamp: now + cliff_secs, vest_end_timestamp: now + duration_secs }.publish(&env);
+        VestingCreated {
+            donor,
+            total_amount,
+            cliff_timestamp: now + cliff_secs,
+            vest_end_timestamp: now + duration_secs,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -1270,7 +1386,12 @@ impl PaymentContract {
         let token_client = token::Client::new(&env, &reward_token);
         token_client.transfer(&env.current_contract_address(), &donor, &claimable);
 
-        VestingClaimed { donor, claimable, new_claimed }.publish(&env);
+        VestingClaimed {
+            donor,
+            claimable,
+            new_claimed,
+        }
+        .publish(&env);
 
         Ok(claimable)
     }
@@ -1350,8 +1471,18 @@ impl PaymentContract {
                 try_cancel_request(&env, rc, payment.request_id);
             }
 
-            PaymentRefunded { payment_id: pid, payer: payment.payer.clone(), amount: payment.amount }.publish(&env);
-            RequestCancelledByPayment { request_id: payment.request_id, payment_id: pid, timestamp: now }.publish(&env);
+            PaymentRefunded {
+                payment_id: pid,
+                payer: payment.payer.clone(),
+                amount: payment.amount,
+            }
+            .publish(&env);
+            RequestCancelledByPayment {
+                request_id: payment.request_id,
+                payment_id: pid,
+                timestamp: now,
+            }
+            .publish(&env);
 
             refunded.push_back(pid);
         }
@@ -1392,7 +1523,11 @@ impl PaymentContract {
     ///
     /// # Errors
     /// * `Unauthorized` - If caller is not the admin
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), Error> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), Error> {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()

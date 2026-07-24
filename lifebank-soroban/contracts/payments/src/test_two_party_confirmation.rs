@@ -3,10 +3,20 @@
 #[cfg(test)]
 mod confirmation_tests {
     use crate::{PaymentContract, PaymentContractClient, PaymentStatus};
-    use soroban_sdk::{
-        testutils::{Address as _, MockAuth, MockAuthInvoke},
-        Address, Env, IntoVal,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn deploy_token_with_balance(
+        env: &Env,
+        admin: &Address,
+        recipient: &Address,
+        amount: i128,
+    ) -> Address {
+        let token = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token.address();
+        let token_client = soroban_sdk::token::StellarAssetClient::new(env, &token_id);
+        token_client.mint(recipient, &amount);
+        token_id
+    }
 
     #[test]
     fn test_payment_requires_both_confirmations() {

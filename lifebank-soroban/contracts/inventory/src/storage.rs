@@ -16,7 +16,10 @@ const HISTORY_PAGE_SIZE: u32 = 50;
 // ── Admin ──────────────────────────────────────────────────────────────────────
 
 pub fn get_admin(env: &Env) -> Address {
-    env.storage().instance().get(&DataKey::Admin).expect("Admin not initialized")
+    env.storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .expect("Admin not initialized")
 }
 
 pub fn set_admin(env: &Env, admin: &Address) {
@@ -35,7 +38,9 @@ pub fn set_authorized_bank(env: &Env, bank: &Address, authorized: bool) {
     let key = DataKey::AuthorizedBank(bank.clone());
     if authorized {
         env.storage().persistent().set(&key, &true);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     } else {
         env.storage().persistent().remove(&key);
     }
@@ -44,12 +49,17 @@ pub fn set_authorized_bank(env: &Env, bank: &Address, authorized: bool) {
 // ── Blood unit counter ─────────────────────────────────────────────────────────
 
 pub fn get_blood_unit_counter(env: &Env) -> u64 {
-    env.storage().instance().get(&DataKey::BloodUnitCounter).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::BloodUnitCounter)
+        .unwrap_or(0)
 }
 
 pub fn increment_blood_unit_id(env: &Env) -> u64 {
     let next_id = get_blood_unit_counter(env) + 1;
-    env.storage().instance().set(&DataKey::BloodUnitCounter, &next_id);
+    env.storage()
+        .instance()
+        .set(&DataKey::BloodUnitCounter, &next_id);
     next_id
 }
 
@@ -58,7 +68,9 @@ pub fn increment_blood_unit_id(env: &Env) -> u64 {
 pub fn set_blood_unit(env: &Env, blood_unit: &BloodUnit) {
     let key = DataKey::BloodUnit(blood_unit.id);
     env.storage().persistent().set(&key, blood_unit);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_blood_unit(env: &Env, id: u64) -> Option<BloodUnit> {
@@ -73,33 +85,55 @@ pub fn blood_unit_exists(env: &Env, id: u64) -> bool {
 
 pub fn add_to_blood_type_index(env: &Env, blood_unit: &BloodUnit) {
     let key = DataKey::BloodTypeIndex(blood_unit.blood_type);
-    let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut units: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_bank_index(env: &Env, blood_unit: &BloodUnit) {
     let key = DataKey::BankIndex(blood_unit.bank_id.clone());
-    let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut units: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_status_index(env: &Env, blood_unit: &BloodUnit) {
     let key = DataKey::StatusIndex(blood_unit.status);
-    let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let mut units: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     units.push_back(blood_unit.id);
     env.storage().persistent().set(&key, &units);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Remove a single ID from a status index bucket.
 /// Uses a single-pass rebuild — O(n) but only called on transitions, not reads.
 pub fn remove_from_status_index(env: &Env, blood_unit_id: u64, old_status: BloodStatus) {
     let key = DataKey::StatusIndex(old_status);
-    let units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+    let units: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
     let mut updated: Vec<u64> = Vec::new(env);
     for i in 0..units.len() {
         let id = units.get(i).unwrap();
@@ -108,16 +142,24 @@ pub fn remove_from_status_index(env: &Env, blood_unit_id: u64, old_status: Blood
         }
     }
     env.storage().persistent().set(&key, &updated);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_donor_index(env: &Env, blood_unit: &BloodUnit) {
     if let Some(donor) = &blood_unit.donor_id {
         let key = DataKey::DonorIndex(donor.clone());
-        let mut units: Vec<u64> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+        let mut units: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(env));
         units.push_back(blood_unit.id);
         env.storage().persistent().set(&key, &units);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -168,23 +210,31 @@ pub fn record_status_change(
         // Current page is full — start a new one
         let next_page = current_page + 1;
         env.storage().persistent().set(&page_key, &next_page);
-        env.storage().persistent().extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         let new_page_key = DataKey::StatusHistoryPage(blood_unit_id, next_page);
         let mut new_page: Vec<StatusChangeHistory> = Vec::new(env);
         new_page.push_back(entry);
         env.storage().persistent().set(&new_page_key, &new_page);
-        env.storage().persistent().extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     } else {
         page.push_back(entry);
         env.storage().persistent().set(&page_data_key, &page);
-        env.storage().persistent().extend_ttl(&page_data_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_data_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     // Increment change count
     let count_key = DataKey::BloodUnitStatusChangeCount(blood_unit_id);
     let count = get_blood_unit_status_change_count(env, blood_unit_id);
     env.storage().persistent().set(&count_key, &(count + 1));
-    env.storage().persistent().extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Return all history entries for a unit by iterating pages.
@@ -253,7 +303,9 @@ pub fn increment_reservation_id(env: &Env) -> u64 {
 }
 
 pub fn set_reservation(env: &Env, id: u64, reservation: &crate::types::Reservation) {
-    env.storage().temporary().set(&DataKey::Reservation(id), reservation);
+    env.storage()
+        .temporary()
+        .set(&DataKey::Reservation(id), reservation);
 }
 
 pub fn get_reservation(env: &Env, id: u64) -> Option<crate::types::Reservation> {

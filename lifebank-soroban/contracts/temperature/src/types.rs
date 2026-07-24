@@ -1,21 +1,11 @@
 use soroban_sdk::{contracttype, Address};
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TemperatureReading {
     pub temperature_celsius_x100: i32,
     pub timestamp: u64,
     pub is_violation: bool,
-}
-
-impl Default for TemperatureReading {
-    fn default() -> Self {
-        TemperatureReading {
-            temperature_celsius_x100: 0,
-            timestamp: 0,
-            is_violation: false,
-        }
-    }
 }
 
 #[contracttype]

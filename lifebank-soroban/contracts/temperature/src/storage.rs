@@ -1,11 +1,8 @@
-use soroban_sdk::{Env, Vec};
 use crate::types::{DataKey, TemperatureReading, TemperatureThreshold};
+use soroban_sdk::{Env, Vec};
 
 pub fn get_admin(env: &Env) -> soroban_sdk::Address {
-    env.storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .unwrap()
+    env.storage().instance().get(&DataKey::Admin).unwrap()
 }
 
 pub fn set_admin(env: &Env, admin: &soroban_sdk::Address) {
@@ -13,9 +10,7 @@ pub fn set_admin(env: &Env, admin: &soroban_sdk::Address) {
 }
 
 pub fn get_threshold(env: &Env, unit_id: u64) -> Option<TemperatureThreshold> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Threshold(unit_id))
+    env.storage().persistent().get(&DataKey::Threshold(unit_id))
 }
 
 pub fn set_threshold(env: &Env, unit_id: u64, threshold: &TemperatureThreshold) {
@@ -24,23 +19,14 @@ pub fn set_threshold(env: &Env, unit_id: u64, threshold: &TemperatureThreshold) 
         .set(&DataKey::Threshold(unit_id), threshold);
 }
 
-pub fn get_temp_page(
-    env: &Env,
-    unit_id: u64,
-    page: u32,
-) -> Vec<TemperatureReading> {
+pub fn get_temp_page(env: &Env, unit_id: u64, page: u32) -> Vec<TemperatureReading> {
     env.storage()
         .persistent()
         .get(&DataKey::TempPage(unit_id, page))
         .unwrap_or_else(|| Vec::new(env))
 }
 
-pub fn set_temp_page(
-    env: &Env,
-    unit_id: u64,
-    page: u32,
-    readings: &Vec<TemperatureReading>,
-) {
+pub fn set_temp_page(env: &Env, unit_id: u64, page: u32, readings: &Vec<TemperatureReading>) {
     env.storage()
         .persistent()
         .set(&DataKey::TempPage(unit_id, page), readings);
