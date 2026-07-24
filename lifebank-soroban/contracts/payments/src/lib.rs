@@ -140,7 +140,10 @@ pub enum Error {
     /// Vesting end timestamp must be strictly greater than cliff timestamp.
     InvalidVestingSchedule = 518,
     /// Arithmetic overflow detected in running totals.
-    Overflow = 518,
+    Overflow = 519,
+    /// Escrow payments must be settled via release_escrow/refund_escrow.
+    /// update_status cannot move funds and would corrupt accounting invariants.
+    EscrowSettlementRequired = 520,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -945,6 +948,16 @@ impl PaymentContract {
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
+        
+        // Security fix: prevent escrow bypass via update_status
+        // Released/Refunded require actual token transfer, which must go through
+        // release_escrow/refund_escrow. update_status cannot move funds.
+        if matches!(status, PaymentStatus::Released | PaymentStatus::Refunded) {
+            if payment.token.is_some() {
+                return Err(Error::EscrowSettlementRequired);
+            }
+        }
+        
         let old_status = payment.status;
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
