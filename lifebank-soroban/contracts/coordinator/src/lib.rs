@@ -416,6 +416,48 @@ impl CoordinatorContract {
             .unwrap_or(false)
     }
 
+    /// Configure the address authorized to call flag_temperature_breach
+    /// (typically the temperature-oracle contract). Admin only.
+    pub fn set_temperature_oracle(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), CoordinatorError> {
+        admin.require_auth();
+        let stored = get_admin(&env)?;
+        if admin != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::TemperatureOracle, &oracle);
+        Ok(())
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), CoordinatorError> {
+        let stored = get_admin(env)?;
+        if *caller != stored {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Restricts flag_temperature_breach to the admin or the configured
+    /// temperature-oracle address, mirroring the admin check used by rollback.
+    fn require_oracle(env: &Env, caller: &Address) -> Result<(), CoordinatorError> {
+        let admin = get_admin(env)?;
+        if *caller == admin {
+            return Ok(());
+        }
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemperatureOracle)
+            .ok_or(CoordinatorError::Unauthorized)?;
+        if *caller != oracle {
+            return Err(CoordinatorError::Unauthorized);
+        }
+        Ok(())
+    }
+
     /// Step 1 – Allocate inventory units to a pending request.
     pub fn allocate_units(
         env: Env,
@@ -428,6 +470,7 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         if let Some(wf) = load_workflow(&env, request_id) {
             if wf.status != WorkflowStatus::Pending {
@@ -520,6 +563,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
         Self::require_not_emergency_halted(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -572,6 +616,7 @@ impl CoordinatorContract {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
         Self::require_not_emergency_halted(&env)?;
+        Self::require_admin(&env, &caller)?;
 
         let mut wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
@@ -758,6 +803,7 @@ impl CoordinatorContract {
         caller.require_auth();
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+        Self::require_oracle(&env, &caller)?;
 
         let pay_addr: Address = env
             .storage()
