@@ -11,7 +11,7 @@ use soroban_sdk::{
 };
 
 use super::{
-    BloodRequest, BloodStatus, BloodUnit, CoordinatorContract, CoordinatorContractClient,
+    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract, CoordinatorContractClient,
     CoordinatorError, Payment, PaymentStatus, RequestStatus, WorkflowStatus,
 };
 
@@ -645,4 +645,114 @@ fn test_expire_workflow_blocked_for_delivered_workflow() {
         Err(Ok(CoordinatorError::InvalidWorkflowState)),
         "expire_workflow must fail for a Delivered workflow"
     );
+}
+
+// ── Issue #1123: workflow-advancing functions must enforce role checks ────────
+
+/// allocate_units must reject a caller that is not the coordinator admin.
+#[test]
+fn test_allocate_units_rejects_non_admin_caller() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+    let attacker = Address::generate(&h.env);
+
+    let result = h.coord.try_allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &attacker,
+        &BloodType::OPositive,
+    );
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+/// confirm_delivery must reject a caller that is not the coordinator admin.
+#[test]
+fn test_confirm_delivery_rejects_non_admin_caller() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    let attacker = Address::generate(&h.env);
+    let result = h.coord.try_confirm_delivery(
+        &1u64,
+        &attacker,
+        &String::from_str(&h.env, "Fabricated-Location"),
+    );
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+/// settle_payment must reject a caller that is not the coordinator admin.
+#[test]
+fn test_settle_payment_rejects_non_admin_caller() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    h.coord
+        .confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A"));
+
+    let attacker = Address::generate(&h.env);
+    let result = h.coord.try_settle_payment(&1u64, &attacker);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+/// flag_temperature_breach must reject a caller that is neither admin nor the
+/// configured temperature oracle.
+#[test]
+fn test_flag_temperature_breach_rejects_unconfigured_caller() {
+    let h = setup();
+    let payment_id = create_locked_payment(&h, 99);
+    let attacker = Address::generate(&h.env);
+
+    let excursion = make_excursion(42);
+    let result = h
+        .coord
+        .try_flag_temperature_breach(&attacker, &payment_id, &excursion);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+/// flag_temperature_breach succeeds for an address configured via
+/// set_temperature_oracle, even though it is not the admin.
+#[test]
+fn test_flag_temperature_breach_allows_configured_oracle() {
+    let h = setup();
+    let payment_id = create_locked_payment(&h, 99);
+    let oracle = Address::generate(&h.env);
+    h.coord.set_temperature_oracle(&h.admin, &oracle);
+
+    let excursion = make_excursion(42);
+    h.coord
+        .flag_temperature_breach(&oracle, &payment_id, &excursion);
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Disputed);
+}
+
+/// Only the admin may configure the temperature oracle address.
+#[test]
+fn test_set_temperature_oracle_rejects_non_admin_caller() {
+    let h = setup();
+    let attacker = Address::generate(&h.env);
+    let oracle = Address::generate(&h.env);
+
+    let result = h.coord.try_set_temperature_oracle(&attacker, &oracle);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
 }
