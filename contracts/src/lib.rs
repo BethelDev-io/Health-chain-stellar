@@ -2772,6 +2772,9 @@ impl HealthChainContract {
             .map_err(|_| Error::InvalidMultiSigConfig)?;
 
         env.storage().persistent().set(&MULTISIG_CONFIG, &config);
+
+        let empty: Map<u64, PendingApproval> = Map::new(&env);
+        env.storage().persistent().set(&PENDING_APPROVALS, &empty);
         Ok(())
     }
 
