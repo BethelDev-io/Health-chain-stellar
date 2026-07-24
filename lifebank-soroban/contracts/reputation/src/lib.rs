@@ -2,13 +2,13 @@
 #![deny(deprecated)]
 
 use soroban_sdk::{
-    contract, contractevent, contracterror, contractimpl, contracttype, Address, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Vec,
 };
 
 // ── Constants (all arithmetic is integer, scaled ×100 for two decimal places) ──
 
 /// Maximum raw score before clamping to 100_00 (100.00)
-const MAX_SCORE: i64 = 100_00;
+const MAX_SCORE: i64 = 10_000;
 const MIN_SCORE: i64 = 0;
 
 /// Weights applied to each score component
@@ -19,14 +19,14 @@ const W_CONSISTENCY: i64 = 10; // consistency bonus
 
 /// Decay: score loses 1 point per DECAY_PERIOD_SECS of inactivity
 const DECAY_PERIOD_SECS: u64 = 30 * 24 * 3600; // 30 days
-const MAX_DECAY: i64 = 20_00; // cap decay at 20 points
+const MAX_DECAY: i64 = 2_000; // cap decay at 20 points
 
 /// Recency half-life: ratings older than HALF_LIFE_SECS count at half weight
 const HALF_LIFE_SECS: u64 = 90 * 24 * 3600; // 90 days
 
 /// Fraud thresholds
-const FRAUD_FLAG_PENALTY: i64 = 15_00; // per confirmed fraud flag
-const MAX_FRAUD_PENALTY: i64 = 50_00; // cap total fraud penalty
+const FRAUD_FLAG_PENALTY: i64 = 1_500; // per confirmed fraud flag
+const MAX_FRAUD_PENALTY: i64 = 5_000; // cap total fraud penalty
 
 /// Consistency bonus: awarded when std-dev of ratings is low
 const CONSISTENCY_LOW_STDDEV: i64 = 50; // ×100 → 0.50 stars
@@ -346,7 +346,7 @@ impl ReputationContract {
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
         Self::require_not_paused(&env)?;
-        if score < 1 || score > 5 {
+        if !(1..=5).contains(&score) {
             return Err(Error::InvalidRating);
         }
 
@@ -460,7 +460,7 @@ impl ReputationContract {
         env: Env,
         event_kind: u32,
         entity_id: u64,
-        completed: bool,
+        _completed: bool,
         response_secs: u64,
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
@@ -660,7 +660,11 @@ impl ReputationContract {
             .persistent()
             .set(&DataKey::Score(entity_id), &result);
 
-        ReputationUpdated { entity_id, score: final_score }.publish(&env);
+        ReputationUpdated {
+            entity_id,
+            score: final_score,
+        }
+        .publish(&env);
 
         Ok(result)
     }
@@ -706,15 +710,15 @@ impl ReputationContract {
 
         let avg = weighted_sum / weight_total; // 100–500 range
                                                // Normalise: (avg - 100) / 400 × 100_00
-        ((avg - 100) * 100_00) / 400
+        ((avg - 100) * 10_000) / 400
     }
 
     /// Completion rate → 0–100_00.
     fn completion_rate_score(completed: u32, assigned: u32) -> i64 {
         if assigned == 0 {
-            return 50_00; // neutral default
+            return 5_000; // neutral default
         }
-        ((completed as i64) * 100_00) / (assigned as i64)
+        ((completed as i64) * 10_000) / (assigned as i64)
     }
 
     /// Response time score → 0–100_00.
@@ -723,20 +727,20 @@ impl ReputationContract {
     /// Linear interpolation in between.
     fn response_time_score(total_secs: u64, count: u32) -> i64 {
         if count == 0 {
-            return 50_00;
+            return 5_000;
         }
         let avg_secs = (total_secs / count as u64) as i64;
         let min_secs: i64 = 5 * 60; // 5 minutes → perfect
         let max_secs: i64 = 60 * 60; // 60 minutes → zero
 
         if avg_secs <= min_secs {
-            return 100_00;
+            return 10_000;
         }
         if avg_secs >= max_secs {
             return 0;
         }
         // Linear: score = (max - avg) / (max - min) × 100_00
-        ((max_secs - avg_secs) * 100_00) / (max_secs - min_secs)
+        ((max_secs - avg_secs) * 10_000) / (max_secs - min_secs)
     }
 
     /// Consistency bonus based on std-dev of ratings.
@@ -794,7 +798,7 @@ impl ReputationContract {
             return 0;
         }
         let mut x = n;
-        let mut y = (x + 1) / 2;
+        let mut y = x.div_ceil(2);
         while y < x {
             x = y;
             y = (x + n / x) / 2;

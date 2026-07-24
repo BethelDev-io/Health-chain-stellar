@@ -16,9 +16,9 @@ pub enum ContractError {
     NotAuthorizedBloodBank = 309,
     NotAuthorizedRider = 310,
     /// Attempted status transition is not valid for the current request state.
-    InvalidRequestStatus = 307,
+    InvalidRequestStatus = 311,
     /// Caller is not the hospital that owns this request.
-    NotRequestOwner = 308,
+    NotRequestOwner = 312,
     /// Transition requires a non-empty human-readable reason.
-    InvalidReason = 309,
+    InvalidReason = 313,
 }

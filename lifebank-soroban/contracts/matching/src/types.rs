@@ -32,9 +32,9 @@ impl Urgency {
     /// Numeric priority — higher is more urgent.
     pub fn priority(self) -> u32 {
         match self {
-            Self::Critical  => 4,
-            Self::Urgent    => 3,
-            Self::Routine   => 2,
+            Self::Critical => 4,
+            Self::Urgent => 3,
+            Self::Routine => 2,
             Self::Scheduled => 1,
         }
     }

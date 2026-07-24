@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{DataKey, Error, Organization, OrgUnverified, OrgVerified};
+use crate::{DataKey, Error, OrgUnverified, OrgVerified, Organization};
 
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
@@ -25,6 +25,7 @@ pub struct VerificationEvent {
     pub reason: Option<String>,
 }
 
+#[allow(dead_code)]
 pub trait VerificationTrait {
     /// Verify an organization (admin only)
     /// Returns the verification metadata
@@ -261,7 +262,7 @@ impl VerificationTrait for VerificationImpl {
 
         for i in 0..org_ids.len() {
             let org_id = org_ids.get(i).unwrap();
-            if let Ok(_) = Self::verify_organization(env.clone(), admin.clone(), org_id) {
+            if Self::verify_organization(env.clone(), admin.clone(), org_id).is_ok() {
                 verified_count += 1;
             }
         }
@@ -282,8 +283,8 @@ impl VerificationTrait for VerificationImpl {
 
         for i in 0..org_ids.len() {
             let org_id = org_ids.get(i).unwrap();
-            if let Ok(_) =
-                Self::unverify_organization(env.clone(), admin.clone(), org_id, reason.clone())
+            if Self::unverify_organization(env.clone(), admin.clone(), org_id, reason.clone())
+                .is_ok()
             {
                 revoked_count += 1;
             }
