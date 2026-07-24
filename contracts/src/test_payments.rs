@@ -13,7 +13,7 @@ use crate::{
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger},
-    vec, Address, Bytes, Env, IntoVal, Map, String, Symbol, TryFromVal,
+    vec, Address, Bytes, Env, Map, String, Symbol, TryFromVal,
 };
 
 fn default_fee_structure(env: &Env) -> FeeStructure {
@@ -521,18 +521,30 @@ fn auto_refund_after_timeout() {
     assert_eq!(client.process_expired_disputes(), 1);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    assert_eq!(last_event.0, contract_id);
+    let last_event = events.events().last().unwrap();
+    let topics = match &last_event.body {
+        soroban_sdk::xdr::ContractEventBody::V0(v0) => &v0.topics,
+        _ => panic!("unexpected contract event version"),
+    };
+    assert_eq!(topics.len(), 3);
     assert_eq!(
-        last_event.1,
-        (
-            symbol_short!("dispute"),
-            symbol_short!("refunded"),
-            symbol_short!("v1")
-        )
-            .into_val(&env)
+        Symbol::try_from_val(&env, topics.get(0).unwrap()).unwrap(),
+        symbol_short!("dispute")
     );
-    let event = crate::DisputeAutoRefundedEvent::try_from_val(&env, &last_event.2).unwrap();
+    assert_eq!(
+        Symbol::try_from_val(&env, topics.get(1).unwrap()).unwrap(),
+        symbol_short!("refunded")
+    );
+    assert_eq!(
+        Symbol::try_from_val(&env, topics.get(2).unwrap()).unwrap(),
+        symbol_short!("v1")
+    );
+    let event = match &last_event.body {
+        soroban_sdk::xdr::ContractEventBody::V0(v0) => {
+            crate::DisputeAutoRefundedEvent::try_from_val(&env, &v0.data).unwrap()
+        }
+        _ => panic!("unexpected contract event version"),
+    };
     assert_eq!(event.case_id, dispute_id);
     assert_eq!(event.payment_id, payment_id);
     assert_eq!(event.refunded_to, payer);
@@ -1124,4 +1136,3 @@ fn test_fee_arithmetic_overflow_boundary() {
     assert_eq!(fee.total(), Err(PaymentError::Overflow));
     assert_eq!(fee.calculate_net_amount(1_000), Err(PaymentError::Overflow));
 }
-

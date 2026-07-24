@@ -7,12 +7,13 @@
 //! drives the full request → allocation → delivery → settlement sequence.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, vec, Address, Env, String,
 };
 
 use super::{
-    BloodRequest, BloodStatus, BloodUnit, CoordinatorContract, CoordinatorContractClient,
-    CoordinatorError, Payment, PaymentStatus, RequestStatus, WorkflowStatus,
+    BloodRequest, BloodStatus, BloodType, BloodUnit, CoordinatorContract,
+    CoordinatorContractClient, CoordinatorError, Payment, PaymentStatus, RequestStatus,
+    WorkflowStatus,
 };
 
 // ── Mock: Request contract ────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ impl MockInventoryContract {
             &BloodUnit {
                 id,
                 status: BloodStatus::Available,
+                blood_type: BloodType::OPositive,
             },
         );
         id
@@ -103,7 +105,9 @@ impl MockInventoryContract {
             .get(&InvKey::Unit(unit_id))
             .unwrap();
         unit.status = new_status;
-        env.storage().persistent().set(&InvKey::Unit(unit_id), &unit);
+        env.storage()
+            .persistent()
+            .set(&InvKey::Unit(unit_id), &unit);
         unit
     }
 
@@ -113,7 +117,13 @@ impl MockInventoryContract {
         authorized_by: Address,
         delivery_location: String,
     ) -> BloodUnit {
-        Self::update_status(env, unit_id, BloodStatus::Delivered, authorized_by, Some(delivery_location))
+        Self::update_status(
+            env,
+            unit_id,
+            BloodStatus::Delivered,
+            authorized_by,
+            Some(delivery_location),
+        )
     }
 }
 
@@ -140,7 +150,11 @@ impl MockPaymentContract {
         env.storage().instance().set(&PayKey::Counter, &id);
         env.storage().persistent().set(
             &PayKey::Payment(id),
-            &Payment { id, request_id, status },
+            &Payment {
+                id,
+                request_id,
+                status,
+            },
         );
         id
     }
@@ -164,7 +178,12 @@ impl MockPaymentContract {
             .set(&PayKey::Payment(payment_id), &p);
     }
 
-    pub fn record_dispute(env: Env, payment_id: u64, _reason: super::payment_client::DisputeReason, _case_id: String) {
+    pub fn record_dispute(
+        env: Env,
+        payment_id: u64,
+        _reason: super::payment_client::DisputeReason,
+        _case_id: String,
+    ) {
         let mut p: Payment = env
             .storage()
             .persistent()
@@ -206,12 +225,18 @@ fn setup<'a>() -> Harness<'a> {
     let coord = CoordinatorContractClient::new(&env, &coord_id);
     coord.initialize(&admin, &req_id, &inv_id, &pay_id);
 
-    Harness { env, admin, coord, req_id, inv_id, pay_id }
+    Harness {
+        env,
+        admin,
+        coord,
+        req_id,
+        inv_id,
+        pay_id,
+    }
 }
 
 fn seed_pending_request(h: &Harness, id: u64) {
-    MockRequestContractClient::new(&h.env, &h.req_id)
-        .seed_request(&id, &RequestStatus::Pending);
+    MockRequestContractClient::new(&h.env, &h.req_id).seed_request(&id, &RequestStatus::Pending);
 }
 
 fn register_unit(h: &Harness) -> u64 {
@@ -232,7 +257,13 @@ fn test_full_happy_path() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     let wf = h.coord.get_workflow(&1u64);
     assert_eq!(wf.status, WorkflowStatus::Allocated);
@@ -241,12 +272,16 @@ fn test_full_happy_path() {
     let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
     assert_eq!(unit.status, BloodStatus::Reserved);
 
-    h.coord.confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
+    h.coord
+        .confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
 
     let wf = h.coord.get_workflow(&1u64);
     assert_eq!(wf.status, WorkflowStatus::Delivered);
     assert!(wf.delivery_confirmed);
-    assert_eq!(wf.delivery_location, Some(String::from_str(&h.env, "Hospital-A-GPS")));
+    assert_eq!(
+        wf.delivery_location,
+        Some(String::from_str(&h.env, "Hospital-A-GPS"))
+    );
 
     let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
     assert_eq!(unit.status, BloodStatus::Delivered);
@@ -269,7 +304,13 @@ fn test_settle_blocked_without_delivery() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     let result = h.coord.try_settle_payment(&1u64, &h.admin);
     assert_eq!(result, Err(Ok(CoordinatorError::DeliveryNotConfirmed)));
@@ -285,7 +326,13 @@ fn test_double_allocation_blocked() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     let unit_id2 = register_unit(&h);
     let result = h.coord.try_allocate_units(
@@ -293,6 +340,7 @@ fn test_double_allocation_blocked() {
         &vec![&h.env, unit_id2],
         &payment_id,
         &h.admin,
+        &BloodType::OPositive,
     );
     assert_eq!(result, Err(Ok(CoordinatorError::WorkflowAlreadyStarted)));
 }
@@ -305,14 +353,19 @@ fn test_allocate_blocked_for_unavailable_unit() {
     let payment_id = create_locked_payment(&h, 1);
 
     // Pre-reserve the unit
-    MockInventoryContractClient::new(&h.env, &h.inv_id)
-        .update_status(&unit_id, &BloodStatus::Reserved, &h.admin, &None);
+    MockInventoryContractClient::new(&h.env, &h.inv_id).update_status(
+        &unit_id,
+        &BloodStatus::Reserved,
+        &h.admin,
+        &None,
+    );
 
     let result = h.coord.try_allocate_units(
         &1u64,
         &vec![&h.env, unit_id],
         &payment_id,
         &h.admin,
+        &BloodType::OPositive,
     );
     assert_eq!(result, Err(Ok(CoordinatorError::UnitNotAvailable)));
 }
@@ -326,8 +379,15 @@ fn test_settle_blocked_for_pending_payment() {
     let payment_id = MockPaymentContractClient::new(&h.env, &h.pay_id)
         .create_payment(&1u64, &PaymentStatus::Pending);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
-    h.coord.confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    h.coord
+        .confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
 
     let result = h.coord.try_settle_payment(&1u64, &h.admin);
     assert_eq!(result, Err(Ok(CoordinatorError::InvalidPaymentState)));
@@ -336,7 +396,11 @@ fn test_settle_blocked_for_pending_payment() {
 #[test]
 fn test_confirm_delivery_blocked_before_allocation() {
     let h = setup();
-    let result = h.coord.try_confirm_delivery(&99u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
+    let result = h.coord.try_confirm_delivery(
+        &99u64,
+        &h.admin,
+        &String::from_str(&h.env, "Hospital-A-GPS"),
+    );
     assert_eq!(result, Err(Ok(CoordinatorError::WorkflowNotFound)));
 }
 
@@ -344,8 +408,7 @@ fn test_confirm_delivery_blocked_before_allocation() {
 fn test_allocate_blocked_for_non_pending_request() {
     let h = setup();
     // Seed request with Approved status (not Pending)
-    MockRequestContractClient::new(&h.env, &h.req_id)
-        .seed_request(&1u64, &RequestStatus::Approved);
+    MockRequestContractClient::new(&h.env, &h.req_id).seed_request(&1u64, &RequestStatus::Approved);
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
@@ -354,6 +417,7 @@ fn test_allocate_blocked_for_non_pending_request() {
         &vec![&h.env, unit_id],
         &payment_id,
         &h.admin,
+        &BloodType::OPositive,
     );
     assert_eq!(result, Err(Ok(CoordinatorError::InvalidRequestState)));
 }
@@ -367,7 +431,13 @@ fn test_rollback_releases_units_and_refunds_payment() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
     h.coord.rollback(&1u64);
 
     let wf = h.coord.get_workflow(&1u64);
@@ -387,8 +457,15 @@ fn test_rollback_blocked_after_settlement() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
-    h.coord.confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    h.coord
+        .confirm_delivery(&1u64, &h.admin, &String::from_str(&h.env, "Hospital-A-GPS"));
     h.coord.settle_payment(&1u64, &h.admin);
 
     let result = h.coord.try_rollback(&1u64);
@@ -407,7 +484,13 @@ fn test_coordinator_pause_blocks_allocate_units() {
     let unit_id = register_unit(&h);
     let pay_id = create_locked_payment(&h, 1);
 
-    let result = h.coord.try_allocate_units(&1u64, &vec![&h.env, unit_id], &pay_id, &h.admin);
+    let result = h.coord.try_allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &pay_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
     assert!(result.is_err());
 }
 
@@ -419,7 +502,13 @@ fn test_coordinator_pause_allows_get_workflow() {
     seed_pending_request(&h, 10);
     let unit_id = register_unit(&h);
     let pay_id = create_locked_payment(&h, 10);
-    h.coord.allocate_units(&10u64, &vec![&h.env, unit_id], &pay_id, &h.admin);
+    h.coord.allocate_units(
+        &10u64,
+        &vec![&h.env, unit_id],
+        &pay_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     h.coord.pause(&h.admin);
 
@@ -438,8 +527,17 @@ fn test_coordinator_unpause_restores_writes() {
     seed_pending_request(&h, 20);
     let unit_id = register_unit(&h);
     let pay_id = create_locked_payment(&h, 20);
-    h.coord.allocate_units(&20u64, &vec![&h.env, unit_id], &pay_id, &h.admin);
-    assert_eq!(h.coord.get_workflow(&20u64).status, WorkflowStatus::Allocated);
+    h.coord.allocate_units(
+        &20u64,
+        &vec![&h.env, unit_id],
+        &pay_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    assert_eq!(
+        h.coord.get_workflow(&20u64).status,
+        WorkflowStatus::Allocated
+    );
 }
 
 #[test]
@@ -542,7 +640,13 @@ fn test_allocate_units_event_includes_unit_ids() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     // Workflow must be Allocated and unit_ids must be stored correctly.
     let wf = h.coord.get_workflow(&1u64);
@@ -566,7 +670,13 @@ fn test_expire_workflow_rolls_back_after_deadline() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 1);
 
-    h.coord.allocate_units(&1u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     let wf = h.coord.get_workflow(&1u64);
     assert_eq!(wf.status, WorkflowStatus::Allocated);
@@ -579,13 +689,25 @@ fn test_expire_workflow_rolls_back_after_deadline() {
     h.coord.expire_workflow(&1u64);
 
     let wf_after = h.coord.get_workflow(&1u64);
-    assert_eq!(wf_after.status, WorkflowStatus::RolledBack, "Expired workflow must be RolledBack");
+    assert_eq!(
+        wf_after.status,
+        WorkflowStatus::RolledBack,
+        "Expired workflow must be RolledBack"
+    );
 
     let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
-    assert_eq!(unit.status, BloodStatus::Available, "Units must be released after expiry");
+    assert_eq!(
+        unit.status,
+        BloodStatus::Available,
+        "Units must be released after expiry"
+    );
 
     let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
-    assert_eq!(payment.status, PaymentStatus::Refunded, "Payment must be Refunded after expiry");
+    assert_eq!(
+        payment.status,
+        PaymentStatus::Refunded,
+        "Payment must be Refunded after expiry"
+    );
 }
 
 /// expire_workflow is rejected when the deadline has not yet elapsed.
@@ -598,7 +720,13 @@ fn test_expire_workflow_blocked_before_deadline() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 2);
 
-    h.coord.allocate_units(&2u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
+    h.coord.allocate_units(
+        &2u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
 
     // Time has NOT advanced past expires_at.
     let result = h.coord.try_expire_workflow(&2u64);
@@ -632,8 +760,15 @@ fn test_expire_workflow_blocked_for_delivered_workflow() {
     let unit_id = register_unit(&h);
     let payment_id = create_locked_payment(&h, 3);
 
-    h.coord.allocate_units(&3u64, &vec![&h.env, unit_id], &payment_id, &h.admin);
-    h.coord.confirm_delivery(&3u64, &h.admin, &String::from_str(&h.env, "Hospital-B"));
+    h.coord.allocate_units(
+        &3u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    h.coord
+        .confirm_delivery(&3u64, &h.admin, &String::from_str(&h.env, "Hospital-B"));
 
     // Advance past expiry.
     let wf = h.coord.get_workflow(&3u64);

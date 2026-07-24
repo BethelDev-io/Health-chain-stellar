@@ -1,17 +1,19 @@
-use soroban_sdk::symbol_short;
 //! Test for issue #845: Expired blood units should not be reservable
 
 #[cfg(test)]
 mod expiry_tests {
-    use crate::{InventoryContract, InventoryContractClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env, String as SorobanString};
+    use crate::{BloodType, InventoryContract, InventoryContractClient};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Address, Env, String as SorobanString,
+    };
 
     #[test]
     fn test_expired_unit_cannot_be_reserved() {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, InventoryContract);
+        let contract_id = env.register(InventoryContract, ());
         let client = InventoryContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -23,13 +25,11 @@ mod expiry_tests {
 
         // Register a blood unit
         let serial = SorobanString::from_str(&env, "EXPIRY-TEST-001");
-        let blood_type = soroban_sdk::symbol_short!("OPos");
-        let unit_id = client
-            .register_blood(&bank, &serial, &blood_type, &450, &None)
-            .unwrap();
+        let blood_type = BloodType::OPositive;
+        let unit_id = client.register_blood(&bank, &serial, &blood_type, &450, &None);
 
         // Verify unit is initially available
-        let unit = client.get_blood_unit(&unit_id).unwrap();
+        let unit = client.get_blood_unit(&unit_id);
         assert_eq!(unit.status, crate::types::BloodStatus::Available);
 
         // Fast-forward time past expiration (42 days shelf life + 1 day)
@@ -55,7 +55,7 @@ mod expiry_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, InventoryContract);
+        let contract_id = env.register(InventoryContract, ());
         let client = InventoryContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -65,10 +65,8 @@ mod expiry_tests {
         client.authorize_bank(&admin, &bank, &true);
 
         let serial = SorobanString::from_str(&env, "FRESH-001");
-        let blood_type = soroban_sdk::symbol_short!("ABPos");
-        let unit_id = client
-            .register_blood(&bank, &serial, &blood_type, &500, &None)
-            .unwrap();
+        let blood_type = BloodType::ABPositive;
+        let unit_id = client.register_blood(&bank, &serial, &blood_type, &500, &None);
 
         // Reserve immediately (well before expiration)
         let mut unit_ids = soroban_sdk::Vec::new(&env);
