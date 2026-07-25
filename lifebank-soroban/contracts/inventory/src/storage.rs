@@ -9,6 +9,17 @@ pub const BLOOD_SHELF_LIFE_DAYS: u64 = 35;
 pub const TTL_THRESHOLD: u32 = 518_400; // ~30 days
 pub const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
 
+/// Approximate ledger close time used for TTL conversions.
+/// Soroban uses ~5 seconds per ledger on mainnet and testnets.
+/// Rounding up (integer ceiling) is intentional: a slightly-too-long TTL is safe;
+/// a slightly-too-short TTL could purge the entry before it logically expires.
+pub const LEDGER_CLOSE_SECS: u64 = 5;
+
+/// Minimum TTL (ledgers) applied to every reservation entry.
+/// Even a 1-second reservation gets this floor so the entry survives at least
+/// a few ledgers after creation and is readable in the same ledger batch.
+pub const RESERVATION_TTL_MIN_LEDGERS: u32 = 60; // ~5 minutes
+
 /// Maximum history entries per storage page. Keeps each page small so
 /// a single read never loads the entire history of a high-traffic unit.
 const HISTORY_PAGE_SIZE: u32 = 50;
@@ -302,10 +313,45 @@ pub fn increment_reservation_id(env: &Env) -> u64 {
     next_id
 }
 
-pub fn set_reservation(env: &Env, id: u64, reservation: &crate::types::Reservation) {
+/// Store a reservation in temporary storage and extend its TTL to cover `duration_seconds`.
+///
+/// # Why we extend TTL here
+/// Soroban temporary-storage entries are assigned a network-default TTL at creation
+/// time (currently ~1 ledger on testnet, a few ledgers on mainnet). That default is
+/// far shorter than the maximum reservation duration (7 days). Without an explicit
+/// bump the entry would be archived/purged long before it logically expires, causing
+/// `get_reservation` to return `None` and leaving all reserved units permanently
+/// stuck in `Reserved` status with no automated recovery path.
+///
+/// We convert `duration_seconds` to ledgers (ceiling division, rounding up) and
+/// apply a small safety buffer (`RESERVATION_TTL_BUFFER_LEDGERS`) so that the entry
+/// is still readable at the exact moment `expiration_timestamp` is reached.
+/// The threshold is set to the same value so the entry is bumped unconditionally
+/// (i.e., `extend_ttl` always sets the TTL to `ttl_ledgers`).
+pub fn set_reservation(
+    env: &Env,
+    id: u64,
+    reservation: &crate::types::Reservation,
+    duration_seconds: u64,
+) {
+    let key = DataKey::Reservation(id);
+    env.storage().temporary().set(&key, reservation);
+
+    // Convert duration to ledgers (ceiling division so we never under-extend).
+    // Add a small buffer so the entry remains readable at the exact expiry instant.
+    const BUFFER_LEDGERS: u32 = 120; // ~10 minutes of headroom
+    let duration_ledgers = (duration_seconds
+        .saturating_add(LEDGER_CLOSE_SECS - 1)
+        / LEDGER_CLOSE_SECS) as u32;
+    let ttl_ledgers = duration_ledgers
+        .saturating_add(BUFFER_LEDGERS)
+        .max(RESERVATION_TTL_MIN_LEDGERS);
+
+    // threshold == ttl_ledgers forces an unconditional bump regardless of the
+    // current remaining TTL (which is unknown / network-default at creation).
     env.storage()
         .temporary()
-        .set(&DataKey::Reservation(id), reservation);
+        .extend_ttl(&key, ttl_ledgers, ttl_ledgers);
 }
 
 pub fn get_reservation(env: &Env, id: u64) -> Option<crate::types::Reservation> {
