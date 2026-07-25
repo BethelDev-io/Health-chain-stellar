@@ -142,4 +142,55 @@ mod security_tests {
         // Should fail on first unit check
         assert_eq!(result, Err(ContractError::NotUnitOwner));
     }
+
+    /// #1153: Verify register_blood requires bank authorization.
+    /// Unauthorized addresses cannot register blood units.
+    #[test]
+    fn test_register_blood_requires_authorized_bank() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let unauthorized_bank = Address::random(&env);
+
+        env.mock_all_auths();
+
+        InventoryContract::initialize(env.clone(), admin).unwrap();
+
+        // Unauthorized bank attempts to register blood
+        let result = InventoryContract::register_blood(
+            env.clone(),
+            unauthorized_bank,
+            String::from_slice(&env, "SN001"),
+            BloodType::OPos,
+            500,
+            None,
+        );
+
+        // Should fail: bank is not authorized
+        assert_eq!(result, Err(ContractError::NotAuthorizedBloodBank));
+    }
+
+    /// #1153: Verify register_blood succeeds for authorized banks.
+    #[test]
+    fn test_register_blood_by_authorized_bank_succeeds() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let authorized_bank = Address::random(&env);
+
+        env.mock_all_auths();
+
+        InventoryContract::initialize(env.clone(), admin.clone()).unwrap();
+        InventoryContract::authorize_bank(env.clone(), admin, authorized_bank.clone())
+            .unwrap();
+
+        let result = InventoryContract::register_blood(
+            env.clone(),
+            authorized_bank,
+            String::from_slice(&env, "SN001"),
+            BloodType::OPos,
+            500,
+            None,
+        );
+
+        assert!(result.is_ok());
+    }
 }
