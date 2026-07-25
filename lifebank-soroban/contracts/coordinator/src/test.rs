@@ -890,3 +890,157 @@ fn test_set_temperature_oracle_rejects_non_admin_caller() {
     let result = h.coord.try_set_temperature_oracle(&attacker, &oracle);
     assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
 }
+
+// ── Admin transfer tests ───────────────────────────────────────────────────
+
+/// Successful two-step admin transfer: propose and accept.
+#[test]
+fn test_propose_and_accept_admin_transfer() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.coord.propose_admin(&h.admin, &new_admin);
+    h.coord.accept_admin(&new_admin);
+}
+
+/// Accept_admin by non-pending address must fail.
+#[test]
+fn test_accept_admin_wrong_address_fails() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    let wrong_address = Address::generate(&h.env);
+
+    h.coord.propose_admin(&h.admin, &new_admin);
+    let result = h.coord.try_accept_admin(&wrong_address);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+/// Only current admin can propose new admin.
+#[test]
+fn test_propose_admin_non_admin_fails() {
+    let h = setup();
+    let attacker = Address::generate(&h.env);
+    let new_admin = Address::generate(&h.env);
+
+    let result = h.coord.try_propose_admin(&attacker, &new_admin);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+}
+
+// ── Emergency halt tests ───────────────────────────────────────────────────
+
+/// Emergency halt blocks confirm_delivery and settle_payment.
+#[test]
+fn test_emergency_halt_blocks_settle_operations() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    h.coord.confirm_delivery(
+        &1u64,
+        &h.admin,
+        &String::from_str(&h.env, "Hospital-A-GPS"),
+    );
+
+    h.coord.emergency_halt(&h.admin);
+    assert!(h.coord.is_emergency_halted());
+
+    let result = h.coord.try_settle_payment(&1u64, &h.admin);
+    assert_eq!(result, Err(Ok(CoordinatorError::EmergencyHalt)));
+}
+
+/// Only admin can trigger emergency halt.
+#[test]
+fn test_emergency_halt_non_admin_fails() {
+    let h = setup();
+    let attacker = Address::generate(&h.env);
+
+    let result = h.coord.try_emergency_halt(&attacker);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+    assert!(!h.coord.is_emergency_halted());
+}
+
+/// Clear emergency halt restores operation.
+#[test]
+fn test_clear_emergency_halt_restores_operation() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    h.coord.confirm_delivery(
+        &1u64,
+        &h.admin,
+        &String::from_str(&h.env, "Hospital-A-GPS"),
+    );
+
+    h.coord.emergency_halt(&h.admin);
+    assert!(h.coord.is_emergency_halted());
+
+    h.coord.clear_emergency_halt(&h.admin);
+    assert!(!h.coord.is_emergency_halted());
+
+    h.coord.settle_payment(&1u64, &h.admin);
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Released);
+}
+
+/// Only admin can clear emergency halt.
+#[test]
+fn test_clear_emergency_halt_non_admin_fails() {
+    let h = setup();
+    let attacker = Address::generate(&h.env);
+
+    h.coord.emergency_halt(&h.admin);
+
+    let result = h.coord.try_clear_emergency_halt(&attacker);
+    assert_eq!(result, Err(Ok(CoordinatorError::Unauthorized)));
+    assert!(h.coord.is_emergency_halted());
+}
+
+/// Rollback transitions Delivered-but-unsettled workflow correctly.
+#[test]
+fn test_rollback_delivered_workflow() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 1);
+
+    h.coord.allocate_units(
+        &1u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    h.coord.confirm_delivery(
+        &1u64,
+        &h.admin,
+        &String::from_str(&h.env, "Hospital-A-GPS"),
+    );
+
+    assert_eq!(h.coord.get_workflow(&1u64).status, WorkflowStatus::Delivered);
+
+    h.coord.rollback(&1u64);
+
+    let wf = h.coord.get_workflow(&1u64);
+    assert_eq!(wf.status, WorkflowStatus::Locked);
+}
