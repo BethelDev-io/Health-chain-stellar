@@ -1077,7 +1077,7 @@ pub struct AccessControlContract;
 #[contractimpl]
 impl AccessControlContract {
     /// Initialize the contract with an administrator
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn ac_initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
@@ -1151,7 +1151,7 @@ impl AccessControlContract {
     }
 
     /// Check if an address has a specific non-expired role
-    pub fn has_role(env: Env, address: Address, role: Role) -> bool {
+    pub fn ac_has_role(env: Env, address: Address, role: Role) -> bool {
         Self::cleanup_expired_roles_internal(&env, &address);
 
         let key = DataKey::AddressRoles(address);
