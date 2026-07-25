@@ -766,7 +766,7 @@ impl InventoryContract {
             request_id,
         };
 
-        storage::set_reservation(&env, reservation_id, &reservation);
+        storage::set_reservation(&env, reservation_id, &reservation, duration_seconds);
 
         // Update all unit statuses to Reserved (local inventory state)
         for i in 0..unit_ids.len() {
