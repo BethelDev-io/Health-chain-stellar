@@ -1033,3 +1033,5 @@ impl InventoryContract {
 mod test;
 #[cfg(test)]
 mod test_expiry_fix;
+#[cfg(test)]
+mod test_security_fixes;
