@@ -411,6 +411,31 @@ mod pure_matching {
     }
 
     #[test]
+    fn expired_but_available_status_unit_is_excluded() {
+        // Regression test: an Available unit whose expiration_timestamp has
+        // already passed must never be selected, even though its status
+        // hasn't been flipped to Expired yet by the inventory housekeeping job.
+        let env = env();
+        let mut candidates = soroban_sdk::Vec::new(&env);
+        candidates.push_back(make_unit(&env, 1, BloodType::ABNegative, 450, 500)); // expired
+        candidates.push_back(make_unit(&env, 2, BloodType::ABNegative, 450, 5000)); // fresh
+
+        let now_timestamp = 1000;
+        let result = select_units(
+            &env,
+            candidates,
+            BloodType::ABNegative,
+            Urgency::Routine,
+            450,
+            None,
+            now_timestamp,
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.get(0).unwrap().unit_id, 2);
+    }
+
+    #[test]
     fn no_candidates_returns_empty() {
         let env = env();
         let candidates = soroban_sdk::Vec::new(&env);
