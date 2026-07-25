@@ -47,6 +47,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Check all targets compile (fails fast on syntax errors)
+        working-directory: lifebank-soroban
+        run: |
+          cargo check --workspace --all-features --all-targets
+
       - name: Run contract tests
         working-directory: lifebank-soroban
         run: |
