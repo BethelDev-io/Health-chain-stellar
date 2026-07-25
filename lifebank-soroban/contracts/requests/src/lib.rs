@@ -26,6 +26,11 @@ mod inventory_client {
     #[allow(dead_code)]
     pub trait InventoryContractInterface {
         fn release_reservation(env: Env, caller: Address, reservation_id: u64);
+        fn release_reservation_by_contract(
+            env: Env,
+            authorized_contract: Address,
+            reservation_id: u64,
+        );
     }
 }
 
@@ -86,8 +91,11 @@ impl RequestContract {
         if let Some(res_id) = request.reservation_id {
             let inventory_addr = storage::get_inventory_contract(env);
             let inv_client = InventoryContractClient::new(env, &inventory_addr);
-            let admin = storage::get_admin(env);
-            inv_client.release_reservation(&admin, &res_id);
+            let requests_contract = env.current_contract_address();
+            // Use cross-contract authorization: the requests contract itself is
+            // the authorized intermediary. The inventory contract verifies that
+            // this function is called FROM the requests contract address.
+            inv_client.release_reservation_by_contract(&requests_contract, &res_id);
             request.reservation_id = None;
             true
         } else {
