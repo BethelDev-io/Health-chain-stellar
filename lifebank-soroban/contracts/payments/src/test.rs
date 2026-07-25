@@ -612,12 +612,17 @@ fn test_update_status_changes_payment_status() {
     let client = PaymentContractClient::new(&env, &cid);
     let admin = Address::generate(&env);
     client.initialize(&admin, &None);
-    let (id, _, _, _) = make_payment(&env, &client, &requests_client, &hospital, 500);
+    
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let id = client.create_payment(&1u64, &payer, &payee, &500i128);
 
+    // Admin can change status
     client.update_status(&id, &PaymentStatus::Locked, &admin);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Locked);
 
+    // Non-escrow payment can go to Released via update_status
     client.update_status(&id, &PaymentStatus::Released, &admin);
     let p = client.get_payment(&id);
     assert_eq!(p.status, PaymentStatus::Released);
@@ -1187,3 +1192,93 @@ fn test_create_escrow_rejects_negative_amount() {
         "Negative amount escrow must be rejected"
     );
 }
+
+/// update_status must NOT allow Released/Refunded on escrow payments without token transfer.
+/// Security fix for issue #1120: prevents admin from bypassing escrow settlement.
+#[test]
+fn test_update_status_blocks_escrow_bypass() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
+
+    // Create escrow payment (Locked status with token set)
+    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+
+    // Try to bypass escrow via update_status → Released (should fail)
+    let result = client.try_update_status(&pid, &PaymentStatus::Released, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::EscrowSettlementRequired)),
+        "update_status must block Released on escrow payments"
+    );
+
+    // Try to bypass escrow via update_status → Refunded (should fail)
+    let result = client.try_update_status(&pid, &PaymentStatus::Refunded, &admin);
+    assert_eq!(
+        result,
+        Err(Ok(Error::EscrowSettlementRequired)),
+        "update_status must block Refunded on escrow payments"
+    );
+
+    // Verify payment is still Locked
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Locked, "Payment should remain Locked");
+
+    // Verify tokens still in contract (not moved)
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    assert_eq!(
+        token_client.balance(&cid),
+        1_000,
+        "Contract should still hold escrowed tokens"
+    );
+}
+
+/// update_status allows non-terminal transitions on escrow payments (e.g., Locked → Disputed).
+#[test]
+fn test_update_status_allows_non_terminal_transitions() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 5_000);
+
+    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+
+    // Locked → Disputed should be allowed (no token transfer needed)
+    let result = client.try_update_status(&pid, &PaymentStatus::Disputed, &admin);
+    assert_eq!(result, Ok(Ok(())), "update_status should allow Locked → Disputed");
+
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Disputed);
+}
+
+/// update_status allows Released/Refunded on non-escrow payments (no token set).
+#[test]
+fn test_update_status_allows_terminal_on_non_escrow() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+
+    // Create non-escrow payment (token = None)
+    let pid = client.create_payment(&1u64, &hospital, &payee, &500i128);
+
+    // Pending → Released should work (no escrow, no token to transfer)
+    let result = client.try_update_status(&pid, &PaymentStatus::Released, &admin);
+    assert_eq!(result, Ok(Ok(())), "update_status should allow Released on non-escrow");
+
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Released);
+}
+

@@ -28,12 +28,14 @@ mod confirmation_tests {
         let admin = Address::generate(&env);
         let hospital = Address::generate(&env);
         let blood_bank = Address::generate(&env);
-        let token = deploy_token_with_balance(&env, &admin, &hospital, 1_000);
+        let token = Address::generate(&env);
 
+        // Initialize contract
         client.initialize(&admin, &None);
 
         // Create escrow payment (hospital pays blood bank)
-        let payment_id = client.create_escrow(&1u64, &hospital, &blood_bank, &1000i128, &token);
+        let payment_id = client
+            .create_escrow(&1u64, &hospital, &blood_bank, &1000i128, &token);
 
         // Verify payment is locked
         let payment = client.get_payment(&payment_id);
@@ -72,11 +74,12 @@ mod confirmation_tests {
         let admin = Address::generate(&env);
         let hospital = Address::generate(&env);
         let blood_bank = Address::generate(&env);
-        let token = deploy_token_with_balance(&env, &admin, &hospital, 500);
+        let token = Address::generate(&env);
 
         client.initialize(&admin, &None);
 
-        let payment_id = client.create_escrow(&1u64, &hospital, &blood_bank, &500i128, &token);
+        let payment_id = client
+            .create_escrow(&1u64, &hospital, &blood_bank, &500i128, &token);
 
         // Hospital confirms FIRST
         client.confirm_receipt(&payment_id, &hospital);
