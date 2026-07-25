@@ -47,9 +47,9 @@ fn require_admin(env: &Env) -> Result<AnalyticsConfig, AnalyticsError> {
 }
 
 fn require_authorized_caller(env: &Env) -> Result<AnalyticsConfig, AnalyticsError> {
-    let cfg = require_initialized(env)?;
-    cfg.admin.require_auth();
-    Ok(cfg)
+    // No longer calls the nonexistent env.invoker() (soroban-sdk 23 removed it);
+    // delegates to require_admin so there's a single source of truth for auth.
+    require_admin(env)
 }
 
 fn current_period_index(env: &Env, duration_secs: u64) -> u64 {
