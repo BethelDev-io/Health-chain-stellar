@@ -206,6 +206,9 @@ pub fn select_units(
         if unit.status != BloodStatus::Available {
             continue;
         }
+        if unit.expiration_timestamp <= now_timestamp {
+            continue;
+        }
         if unit.blood_type == request_blood_type {
             exact.push_back(unit);
         } else if is_compatible(unit.blood_type, request_blood_type) {
