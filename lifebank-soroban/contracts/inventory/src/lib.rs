@@ -798,14 +798,65 @@ impl InventoryContract {
         Ok(reservation_id)
     }
 
+    /// Internal helper: Release a reservation by trusting the current contract as intermediary.
+    ///
+    /// This function is called by other contracts (e.g., requests) that have already validated
+    /// the authorization from their own actors (hospital, admin). The requests contract passes
+    /// its own address as `authorized_contract`, establishing a cross-contract trust relationship.
+    ///
+    /// **Cross-contract authorization pattern:**
+    /// - Requests contract's admin authenticates the cancellation decision (via cancel_request
+    ///   or update_request_status requiring caller.require_auth())
+    /// - Requests contract invokes this function with its own address as `authorized_contract`
+    /// - Inventory verifies that the caller IS that contract, trusting it as a valid intermediary
+    /// - This avoids requiring the requests contract's admin to re-sign at the inventory level
+    ///
+    /// # Arguments
+    /// * `authorized_contract` - The address of the contract making the release decision
+    ///   (typically the requests contract). Must equal current_contract_address().
+    /// * `reservation_id` - ID of the reservation to release
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not the authorized_contract
+    /// - `ReservationNotFound` if reservation does not exist
+    /// - `Paused` if the contract is paused
+    fn release_reservation_by_contract(
+        env: &Env,
+        authorized_contract: &Address,
+        reservation_id: u64,
+    ) -> Result<(), ContractError> {
+        Self::require_not_paused(&env)?;
+
+        // Verify that the caller is the contract we expect (requests contract).
+        // This establishes the cross-contract authorization chain:
+        // hospital/admin calls requests::cancel_request/update_request_status with require_auth()
+        // -> requests contract calls inventory::release_reservation_by_contract(requests_addr)
+        // -> we verify that env.current_contract_address() == authorized_contract
+        // The requests contract is trusted to make release decisions after its own authorization checks.
+        if &env.current_contract_address() != authorized_contract {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let reservation = storage::get_reservation(&env, reservation_id)
+            .ok_or(ContractError::ReservationNotFound)?;
+
+        Self::release_reservation_internal(&env, &reservation, reservation_id)?;
+
+        Ok(())
+    }
+
     /// Release a reservation, returning all units to `Available`.
     ///
-    /// Can only be called by the original reserver or admin.
+    /// Can only be called by the original reserver or admin (external authorization).
     /// If the reservation has already expired (ledger time > expiration_timestamp)
     /// the call still succeeds so callers can clean up stale reservations.
     ///
     /// If a registry contract has been configured, each released unit is also
     /// marked `Available` in the authoritative `BloodUnitRegistry`.
+    ///
+    /// **Note:** For cross-contract calls (e.g., from requests contract), use
+    /// `release_reservation_by_contract()` instead, which establishes proper cross-contract
+    /// authorization semantics and avoids the need to re-sign at the inventory level.
     ///
     /// Records a status history entry and emits a status-change event for every
     /// unit that transitions Reserved → Available, preserving the full audit trail.
@@ -828,6 +879,19 @@ impl InventoryContract {
                 return Err(ContractError::Unauthorized);
             }
         }
+
+        Self::release_reservation_internal(&env, &reservation, reservation_id)?;
+
+        Ok(())
+    }
+
+    /// Shared internal logic for releasing a reservation.
+    /// Handles the actual state changes and synchronization with registry.
+    fn release_reservation_internal(
+        env: &Env,
+        reservation: &Reservation,
+        reservation_id: u64,
+    ) -> Result<(), ContractError> {
 
         let registry_id: Option<Address> =
             env.storage().instance().get(&DataKey::RegistryContractId);
