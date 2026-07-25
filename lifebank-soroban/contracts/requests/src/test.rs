@@ -380,3 +380,42 @@ fn test_request_history_captures_transition_rationale() {
         String::from_str(&env, "Hospital no longer needs remaining units")
     );
 }
+
+#[test]
+fn test_cancel_request_with_reservation_id() {
+    let (env, client, _contract_id, admin, _inventory_contract) = create_initialized_contract();
+    let hospital = authorize_hospital(&env, &client);
+    env.ledger().set_timestamp(7_000);
+    let request_id = client.create_request(
+        &hospital,
+        &BloodType::OPositive,
+        &BloodComponent::RedCells,
+        &500u32,
+        &Urgency::Urgent,
+        &8_000u64,
+    );
+
+    let reservation_id = 42u64;
+    client.set_reservation_id(&admin, &request_id, &reservation_id);
+
+    client.update_request_status(
+        &admin,
+        &request_id,
+        &RequestStatus::Approved,
+        &String::from_str(&env, "Approved"),
+    );
+
+    client.cancel_request(
+        &hospital,
+        &request_id,
+        &String::from_str(&env, "Request cancelled"),
+    );
+
+    let request = client.get_request(&request_id);
+    assert_eq!(request.status, RequestStatus::Cancelled);
+    assert_eq!(request.reservation_id, None);
+
+    let history = client.get_request_history(&request_id);
+    let cancel_entry = history.get(2).unwrap();
+    assert_eq!(cancel_entry.released_reservation, true);
+}
