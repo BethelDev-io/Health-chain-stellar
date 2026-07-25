@@ -476,6 +476,7 @@ export class AuthService {
     refreshToken: string;
     refreshExpiresInSeconds: number;
   } {
+    const { kid, secret } = this.jwtKeyService.getActiveKey();
     const accessToken = this.jwtService.sign(
       payload as unknown as Record<string, unknown>,
       { secret, keyid: kid },
