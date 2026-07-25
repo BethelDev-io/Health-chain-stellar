@@ -102,6 +102,7 @@ pub struct DonationPledge {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VestingSchedule {
     pub donor: Address,
+    pub reward_token: Address,
     pub total_amount: i128,
     pub cliff_timestamp: u64,
     pub vest_end_timestamp: u64,
@@ -1296,6 +1297,7 @@ impl PaymentContract {
         env: Env,
         admin: Address,
         donor: Address,
+        reward_token: Address,
         total_amount: i128,
         cliff_secs: u64,
         duration_secs: u64,
@@ -1331,6 +1333,7 @@ impl PaymentContract {
         let now = env.ledger().timestamp();
         let schedule = VestingSchedule {
             donor: donor.clone(),
+            reward_token: reward_token.clone(),
             total_amount,
             cliff_timestamp: now + cliff_secs,
             vest_end_timestamp: now + duration_secs,
@@ -1350,7 +1353,7 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn claim_vested(env: Env, donor: Address, reward_token: Address) -> Result<i128, Error> {
+    pub fn claim_vested(env: Env, donor: Address) -> Result<i128, Error> {
         donor.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -1383,7 +1386,7 @@ impl PaymentContract {
         schedule.claimed = new_claimed;
         store_vesting(&env, &schedule);
 
-        let token_client = token::Client::new(&env, &reward_token);
+        let token_client = token::Client::new(&env, &schedule.reward_token);
         token_client.transfer(&env.current_contract_address(), &donor, &claimable);
 
         VestingClaimed {
