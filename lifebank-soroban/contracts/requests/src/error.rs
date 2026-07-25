@@ -22,3 +22,40 @@ pub enum ContractError {
     /// Transition requires a non-empty human-readable reason.
     InvalidReason = 313,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ContractError;
+
+    /// Regression test: every variant must have a unique discriminant, or the
+    /// crate fails to compile with E0081 (duplicate discriminant value).
+    #[test]
+    fn all_discriminants_are_unique() {
+        let all = [
+            ContractError::AlreadyInitialized,
+            ContractError::NotInitialized,
+            ContractError::Unauthorized,
+            ContractError::InvalidTimestamp,
+            ContractError::InvalidQuantity,
+            ContractError::NotAuthorizedHospital,
+            ContractError::RequestNotFound,
+            ContractError::UnauthorizedStatusTransition,
+            ContractError::InvalidStatusTransition,
+            ContractError::NotAuthorizedBloodBank,
+            ContractError::NotAuthorizedRider,
+            ContractError::InvalidRequestStatus,
+            ContractError::NotRequestOwner,
+            ContractError::InvalidReason,
+        ];
+
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(
+                    all[i] as u32, all[j] as u32,
+                    "ContractError variants {:?} and {:?} share discriminant {}",
+                    all[i], all[j], all[i] as u32
+                );
+            }
+        }
+    }
+}
