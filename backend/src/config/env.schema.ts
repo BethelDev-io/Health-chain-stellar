@@ -11,6 +11,7 @@ import {
   IsNotEmpty,
   Matches,
   IsInt,
+  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -74,13 +75,14 @@ export class EnvironmentVariables {
 
   // ─── JWT ──────────────────────────────────────────────────────────────────
 
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
   @IsString()
-  @IsNotEmpty({ message: 'JWT_SECRET is required' })
-  @Matches(/^(?!your-super-secret).{16,}$/, {
+  @IsNotEmpty({ message: 'JWT_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!default-secret|your-super-secret).{16,}$/, {
     message:
-      'JWT_SECRET must be at least 16 characters and not the default placeholder',
+      'JWT_SECRET must be at least 16 characters and not a known placeholder',
   })
-  JWT_SECRET: string;
+  JWT_SECRET: string = '';
 
   @IsOptional()
   @IsString()
@@ -98,17 +100,27 @@ export class EnvironmentVariables {
   @IsString()
   JWT_EXPIRES_IN: string = '1h';
 
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
   @IsString()
-  @IsNotEmpty({ message: 'JWT_REFRESH_SECRET is required' })
-  @Matches(/^(?!your-super-secret).{16,}$/, {
+  @IsNotEmpty({ message: 'JWT_REFRESH_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!refresh-secret|your-super-secret).{16,}$/, {
     message:
-      'JWT_REFRESH_SECRET must be at least 16 characters and not the default placeholder',
+      'JWT_REFRESH_SECRET must be at least 16 characters and not a known placeholder',
   })
-  JWT_REFRESH_SECRET: string;
+  JWT_REFRESH_SECRET: string = '';
 
   @IsOptional()
   @IsString()
   JWT_REFRESH_EXPIRES_IN: string = '7d';
+
+  @ValidateIf((obj) => obj.NODE_ENV !== 'test')
+  @IsString()
+  @IsNotEmpty({ message: 'LOCAL_SIGN_SECRET is required (not a hardcoded fallback)' })
+  @Matches(/^(?!change-me-in-production).{16,}$/, {
+    message:
+      'LOCAL_SIGN_SECRET must be at least 16 characters and not the default placeholder',
+  })
+  LOCAL_SIGN_SECRET: string = '';
 
   // ─── Redis ────────────────────────────────────────────────────────────────
 

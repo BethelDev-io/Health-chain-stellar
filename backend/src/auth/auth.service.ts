@@ -360,10 +360,7 @@ export class AuthService {
       const payload = this.jwtService.verify<JwtPayload & { jti?: string }>(
         refreshToken,
         {
-          secret: this.configService.get<string>(
-            'JWT_REFRESH_SECRET',
-            'refresh-secret',
-          ),
+          secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
         },
       );
 
@@ -497,9 +494,7 @@ export class AuthService {
     return this.jwtService.sign(
       { ...payload, jti } as unknown as Record<string, unknown>,
       {
-        secret:
-          this.configService.get<string>('JWT_REFRESH_SECRET') ??
-          'refresh-secret',
+        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
         expiresIn: refreshExpiresIn,
       },
     );
