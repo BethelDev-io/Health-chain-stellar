@@ -75,8 +75,8 @@ export class DisputesController {
   @ApiResponse({ status: 200, description: 'Resource updated successfully' })
   @Patch(':id/resolve')
   @RequirePermissions(Permission.DISPUTE_RESOLVE)
-  resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto) {
-    return this.service.resolve(id, dto);
+  resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto, @User('id') userId: string) {
+    return this.service.resolve(id, dto, userId);
   }
 
   @ApiOperation({ summary: 'Post :id notes' })

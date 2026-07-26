@@ -352,13 +352,15 @@ impl ReputationContract {
 
     /// Submit a rating event for an entity and recalculate its score.
     ///
-    /// `score` must be 1–5 (inclusive).
+    /// `score` must be 1–5 (inclusive). `caller` must be the configured admin.
     pub fn submit_rating(
         env: Env,
+        caller: Address,
         entity_id: u64,
         score: i64,
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
+        Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         Self::require_valid_timestamp(&env, timestamp)?;
         if !(1..=5).contains(&score) {
@@ -405,13 +407,16 @@ impl ReputationContract {
     }
 
     /// Record a completed or failed assignment and recalculate score.
+    /// `caller` must be the configured admin.
     pub fn record_assignment(
         env: Env,
+        caller: Address,
         entity_id: u64,
         completed: bool,
         response_secs: u64,
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
+        Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
@@ -444,8 +449,15 @@ impl ReputationContract {
         Self::calculate_reputation(env, entity_id)
     }
 
-    /// Flag an entity for fraud and recalculate score.
-    pub fn flag_fraud(env: Env, entity_id: u64, timestamp: u64) -> Result<ReputationScore, Error> {
+    /// Flag an entity for fraud and recalculate score. `caller` must be the
+    /// configured admin.
+    pub fn flag_fraud(
+        env: Env,
+        caller: Address,
+        entity_id: u64,
+        timestamp: u64,
+    ) -> Result<ReputationScore, Error> {
+        Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
@@ -475,21 +487,37 @@ impl ReputationContract {
     /// 2 = dispute_resolved_against (negative outcome — increments fraud flags)
     pub fn update_from_event(
         env: Env,
+        caller: Address,
         event_kind: u32,
         entity_id: u64,
         _completed: bool,
         response_secs: u64,
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
+        Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
 
         match event_kind {
             // Payment completed: record assignment as completed
-            0 => Self::record_assignment(env.clone(), entity_id, true, response_secs, timestamp),
+            0 => Self::record_assignment(
+                env.clone(),
+                caller,
+                entity_id,
+                true,
+                response_secs,
+                timestamp,
+            ),
             // Dispute resolved in favor of the entity: count as a successful completion
-            1 => Self::record_assignment(env.clone(), entity_id, true, response_secs, timestamp),
+            1 => Self::record_assignment(
+                env.clone(),
+                caller,
+                entity_id,
+                true,
+                response_secs,
+                timestamp,
+            ),
             // Dispute resolved against the entity: flag fraud (increment fraud counter)
-            2 => Self::flag_fraud(env.clone(), entity_id, timestamp),
+            2 => Self::flag_fraud(env.clone(), caller, entity_id, timestamp),
             _ => Err(Error::InvalidInput),
         }
     }
@@ -522,6 +550,16 @@ impl ReputationContract {
             is_resolved: false,
             is_appealed: false,
         });
+
+        // Keep only the 100 most recent penalties to bound storage
+        if input.penalties.len() > 100 {
+            let mut trimmed = Vec::new(&env);
+            let start = input.penalties.len() - 100;
+            for i in start..input.penalties.len() {
+                trimmed.push_back(input.penalties.get(i).unwrap());
+            }
+            input.penalties = trimmed;
+        }
 
         env.storage()
             .persistent()

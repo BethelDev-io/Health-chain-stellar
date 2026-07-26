@@ -476,6 +476,30 @@ impl RequestContract {
         Ok(())
     }
 
+    /// Set or update the inventory reservation ID for a request. Admin only.
+    /// Called when units are reserved against a request so cancellation can release them.
+    pub fn set_reservation_id(
+        env: Env,
+        caller: Address,
+        request_id: u64,
+        reservation_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        storage::require_initialized(&env)?;
+
+        let admin = storage::get_admin(&env);
+        if caller != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        request.reservation_id = Some(reservation_id);
+        storage::set_request(&env, &request);
+
+        Ok(())
+    }
+
     pub fn get_request_history(
         env: Env,
         request_id: u64,
@@ -574,3 +598,8 @@ impl RequestContract {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test;
+#[cfg(test)]
+mod test_security_fixes;
