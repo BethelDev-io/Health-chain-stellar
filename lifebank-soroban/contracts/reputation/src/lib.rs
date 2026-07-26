@@ -506,6 +506,16 @@ impl ReputationContract {
             is_appealed: false,
         });
 
+        // Keep only the 100 most recent penalties to bound storage
+        if input.penalties.len() > 100 {
+            let mut trimmed = Vec::new(&env);
+            let start = input.penalties.len() - 100;
+            for i in start..input.penalties.len() {
+                trimmed.push_back(input.penalties.get(i).unwrap());
+            }
+            input.penalties = trimmed;
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::Input(entity_id), &input);

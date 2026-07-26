@@ -319,11 +319,17 @@ impl TemperatureContract {
         };
 
         env.storage().persistent().set(&streak_key, &new_streak);
+        env.storage()
+            .persistent()
+            .extend_ttl(&streak_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
 
         // Check if unit should be compromised (3 consecutive violations)
         if new_streak >= 3 {
             let compromised_key = DataKey::IsCompromised(unit_id);
             env.storage().persistent().set(&compromised_key, &true);
+            env.storage()
+                .persistent()
+                .extend_ttl(&compromised_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
         }
 
         let mut page_num: u32 = 0;
@@ -524,7 +530,13 @@ impl TemperatureContract {
     /// Current consecutive violation count
     pub fn get_consecutive_violation_streak(env: Env, unit_id: u64) -> u32 {
         let streak_key = DataKey::ConsecutiveViolationStreak(unit_id);
-        env.storage().persistent().get(&streak_key).unwrap_or(0)
+        let streak = env.storage().persistent().get(&streak_key).unwrap_or(0);
+        if streak > 0 {
+            env.storage()
+                .persistent()
+                .extend_ttl(&streak_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+        }
+        streak
     }
 
     /// Check if a blood unit has been compromised due to consecutive violations
@@ -536,10 +548,16 @@ impl TemperatureContract {
     /// `true` if unit has 3 or more consecutive violations (compromised), `false` otherwise
     pub fn is_compromised(env: Env, unit_id: u64) -> bool {
         let compromised_key = DataKey::IsCompromised(unit_id);
-        env.storage()
+        let is_compromised = env.storage()
             .persistent()
             .get(&compromised_key)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if is_compromised {
+            env.storage()
+                .persistent()
+                .extend_ttl(&compromised_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+        }
+        is_compromised
     }
 
     /// Reset the compromised status and violation streak for a blood unit (admin only)
@@ -567,7 +585,14 @@ impl TemperatureContract {
         let compromised_key = DataKey::IsCompromised(unit_id);
 
         env.storage().persistent().set(&streak_key, &0u32);
+        env.storage()
+            .persistent()
+            .extend_ttl(&streak_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
+
         env.storage().persistent().set(&compromised_key, &false);
+        env.storage()
+            .persistent()
+            .extend_ttl(&compromised_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
 
         CompromisedReset { unit_id }.publish(&env);
 
