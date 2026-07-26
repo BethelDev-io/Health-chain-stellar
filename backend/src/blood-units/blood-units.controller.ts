@@ -250,8 +250,21 @@ export class BloodUnitsController {
 
   @RequirePermissions(Permission.REGISTER_BLOOD_UNIT)
   @Get('inventory/statistics')
-  async getInventoryStatistics(@Query('bankId') bankId?: string) {
-    return this.inventoryQueryService.getStatistics(bankId);
+  async getInventoryStatistics(
+    @Query('bankId') bankId: string | undefined,
+    @Req()
+    request: Request & {
+      user?: { id: string; role: string; organizationId?: string };
+    },
+  ) {
+    const isAdmin = request.user?.role?.toLowerCase() === 'admin';
+    const scopedBankId = isAdmin ? bankId : request.user?.organizationId;
+    if (!scopedBankId) {
+      throw new BadRequestException(
+        'bankId is required (derived from your organization unless you are an admin).',
+      );
+    }
+    return this.inventoryQueryService.getStatistics(scopedBankId);
   }
 
   @RequirePermissions(Permission.REGISTER_BLOOD_UNIT)
