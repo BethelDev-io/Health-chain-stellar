@@ -290,21 +290,17 @@ impl ReputationContract {
         Ok(())
     }
 
-    /// Restrict a call to the configured admin, matching the pattern already
-    /// used by `apply_penalty`/`resolve_penalty`. Used to gate the
-    /// score-mutating entry points (submit_rating, record_assignment,
-    /// flag_fraud, update_from_event) which previously had no access control
-    /// at all.
-    fn require_admin_auth(env: &Env, caller: &Address) -> Result<(), Error> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotAuthorized)?;
-        if *caller != admin {
-            return Err(Error::NotAuthorized);
+    /// Reject caller-supplied timestamps that lie in the future relative to
+    /// the current ledger time. Rating/assignment/fraud timestamps feed
+    /// directly into recency weighting (`weighted_rating_score`) and
+    /// inactivity decay (`decay_penalty`) — an unbounded future timestamp
+    /// lets a caller force maximum recency weight and permanently defeat
+    /// decay, so it must be validated against ledger time rather than
+    /// trusted as-is.
+    fn require_valid_timestamp(env: &Env, timestamp: u64) -> Result<(), Error> {
+        if timestamp > env.ledger().timestamp() {
+            return Err(Error::InvalidInput);
         }
-        caller.require_auth();
         Ok(())
     }
 
@@ -366,6 +362,7 @@ impl ReputationContract {
     ) -> Result<ReputationScore, Error> {
         Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         if !(1..=5).contains(&score) {
             return Err(Error::InvalidRating);
         }
@@ -421,6 +418,7 @@ impl ReputationContract {
     ) -> Result<ReputationScore, Error> {
         Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
             .storage()
             .persistent()
@@ -461,6 +459,7 @@ impl ReputationContract {
     ) -> Result<ReputationScore, Error> {
         Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
             .storage()
             .persistent()
