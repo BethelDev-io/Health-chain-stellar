@@ -123,7 +123,7 @@ export class DisputesService {
     return this.get(id);
   }
 
-  async resolve(id: string, dto: ResolveDisputeDto): Promise<DisputeEntity> {
+  async resolve(id: string, dto: ResolveDisputeDto, resolvedBy: string): Promise<DisputeEntity> {
     const d = await this.get(id);
     if (d.status === DisputeStatus.RESOLVED || d.status === DisputeStatus.CLOSED) {
       throw new ConflictException(`Dispute '${id}' is already '${d.status}'`);
