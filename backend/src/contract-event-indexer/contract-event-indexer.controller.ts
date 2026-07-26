@@ -1,5 +1,13 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+
+import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { Permission } from '../auth/enums/permission.enum';
 
 import { ContractEventIndexerService } from './contract-event-indexer.service';
 import {
@@ -23,6 +31,7 @@ export class ContractEventIndexerController {
   /** Ingest a single contract event (idempotent — duplicates are silently ignored) */
   @ApiOperation({ summary: 'Post ingest' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('ingest')
   ingest(@Body() dto: IngestEventDto) {
     return this.service.ingest(dto);
@@ -31,6 +40,7 @@ export class ContractEventIndexerController {
   /** Ingest a batch of contract events */
   @ApiOperation({ summary: 'Post ingest batch' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('ingest/batch')
   ingestBatch(@Body() events: IngestEventDto[]) {
     return this.service.ingestBatch(events);
@@ -63,6 +73,7 @@ export class ContractEventIndexerController {
   /** Replay: delete events from a ledger height and reset cursors for re-ingestion */
   @ApiOperation({ summary: 'Post replay' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('replay')
   replay(@Body() dto: ReplayFromLedgerDto) {
     return this.service.replayFromLedger(dto);
@@ -76,6 +87,7 @@ export class ContractEventIndexerController {
    */
   @ApiOperation({ summary: 'Post cursors reset' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('cursors/reset')
   resetCursor(@Body() dto: CursorResetDto) {
     return this.service.resetCursor(dto);
@@ -97,6 +109,7 @@ export class ContractEventIndexerController {
   /** List quarantined poison events (optionally filtered by status) */
   @ApiOperation({ summary: 'Get poison events' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Get('poison-events')
   getPoisonEvents(@Query('status') status?: PoisonEventStatus) {
     return this.service.getPoisonEvents(status);
@@ -105,6 +118,7 @@ export class ContractEventIndexerController {
   /** Quarantine a poison event (called by projection workers on failure) */
   @ApiOperation({ summary: 'Post poison events quarantine' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('poison-events/quarantine')
   quarantine(@Body() dto: QuarantinePoisonEventDto) {
     return this.service.quarantinePoisonEvent(dto);
@@ -113,6 +127,7 @@ export class ContractEventIndexerController {
   /** Operator: mark a poison event as replayed and re-process it */
   @ApiOperation({ summary: 'Post poison events replay' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('poison-events/replay')
   replayPoison(@Body() dto: ReplayPoisonEventDto) {
     return this.service.replayPoisonEvent(dto);
@@ -121,6 +136,7 @@ export class ContractEventIndexerController {
   /** Operator: discard a poison event (no further processing) */
   @ApiOperation({ summary: 'Post poison events discard' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   @Post('poison-events/discard')
   discardPoison(@Body() dto: DiscardPoisonEventDto) {
     return this.service.discardPoisonEvent(dto);
