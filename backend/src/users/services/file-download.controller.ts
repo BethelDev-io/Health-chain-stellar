@@ -3,6 +3,7 @@ import * as path from 'path';
 
 import {
   Controller,
+  ForbiddenException,
   Get,
   Query,
   Req,
@@ -70,11 +71,48 @@ export class FileDownloadController {
   @Get('download/auth')
   async downloadWithJwt(
     @Query('key') key: string,
-    @Req() _req: Request,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     if (!key) throw new NotFoundException('Missing key parameter');
+
+    const user = req.user as { id: string; role: string } | undefined;
+    if (!user?.id) throw new UnauthorizedException('Authentication required');
+
+    const subfolder = key.split('/')[0];
+    const accessClass = resolveAccessClass(subfolder);
+
+    if (accessClass === ArtifactAccessClass.PROTECTED) {
+      this.assertProtectedAccess(key, subfolder, user);
+    }
+
     return this.serve(key, res);
+  }
+
+  /**
+   * ACL enforcement for PROTECTED artifacts (#1162).
+   *
+   * - profile/{ownerId}/...  → only the owning user may download.
+   * - evidence/... or proof/... → caller must be an admin (holds DISPUTE_RESOLVE /
+   *   EXPORT_DISPUTES permissions by role assignment).
+   */
+  private assertProtectedAccess(
+    key: string,
+    subfolder: string,
+    user: { id: string; role: string },
+  ): void {
+    if (subfolder === 'profile') {
+      const ownerId = key.split('/')[1];
+      if (!ownerId || ownerId !== user.id) {
+        throw new ForbiddenException('Access denied');
+      }
+      return;
+    }
+
+    // evidence / proof — restricted to admin role which holds dispute-related permissions
+    if (user.role !== 'admin') {
+      throw new ForbiddenException('Access denied');
+    }
   }
 
   private async serve(key: string, res: Response): Promise<void> {
