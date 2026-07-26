@@ -242,16 +242,24 @@ fn get_admin(env: &Env) -> Result<Address, CoordinatorError> {
         .ok_or(CoordinatorError::NotInitialized)
 }
 
+fn is_terminal(status: WorkflowStatus) -> bool {
+    matches!(status, WorkflowStatus::Settled | WorkflowStatus::RolledBack)
+}
+
 fn load_workflow(env: &Env, request_id: u64) -> Option<WorkflowRecord> {
     const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
     let key = DataKey::Workflow(request_id);
 
-    let workflow = env.storage().persistent().get(&key);
-    if workflow.is_some() {
-        // Extend TTL only after confirming the workflow exists.
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, WORKFLOW_TTL_LEDGERS, WORKFLOW_TTL_LEDGERS);
+    let workflow: Option<WorkflowRecord> = env.storage().persistent().get(&key);
+    if let Some(wf) = &workflow {
+        // Terminal workflows are archived with a fixed short TTL at write time
+        // (see save_workflow) and must be allowed to lapse naturally — do not
+        // keep extending TTL on every read or storage grows unbounded forever.
+        if !is_terminal(wf.status) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, WORKFLOW_TTL_LEDGERS, WORKFLOW_TTL_LEDGERS);
+        }
     }
 
     workflow
@@ -259,15 +267,21 @@ fn load_workflow(env: &Env, request_id: u64) -> Option<WorkflowRecord> {
 
 fn save_workflow(env: &Env, wf: &WorkflowRecord) {
     const WORKFLOW_TTL_LEDGERS: u32 = 535_680; // ~30 days at 5s/ledger
+    // Terminal records get a short archival TTL instead of the long
+    // auto-renewing one, so they lapse on their own instead of accumulating
+    // as permanent persistent-storage entries.
+    const TERMINAL_TTL_LEDGERS: u32 = 17_280; // ~1 day at 5s/ledger
 
     let key = DataKey::Workflow(wf.request_id);
 
     env.storage().persistent().set(&key, wf);
 
-    // Extend TTL on every write
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, WORKFLOW_TTL_LEDGERS, WORKFLOW_TTL_LEDGERS);
+    let ttl = if is_terminal(wf.status) {
+        TERMINAL_TTL_LEDGERS
+    } else {
+        WORKFLOW_TTL_LEDGERS
+    };
+    env.storage().persistent().extend_ttl(&key, ttl, ttl);
 }
 
 // ── Contract ───────────────────────────────────────────────────────────────────
