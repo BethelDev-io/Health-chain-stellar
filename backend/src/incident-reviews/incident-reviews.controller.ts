@@ -107,14 +107,22 @@ export class IncidentReviewsController {
 
   @Get(':id/corrective-actions')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
-  getCorrectiveActions(@Param('id') id: string) {
-    return this.service.getCorrectiveActions(id);
+  getCorrectiveActions(@Param('id') id: string, @Request() req: any) {
+    return this.service.getCorrectiveActions(id, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @Get(':id/evidence-links')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
-  getEvidenceLinks(@Param('id') id: string) {
-    return this.service.getEvidenceLinks(id);
+  getEvidenceLinks(@Param('id') id: string, @Request() req: any) {
+    return this.service.getEvidenceLinks(id, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @Post(':id/corrective-actions')
@@ -142,6 +150,11 @@ export class IncidentReviewsController {
       actionId,
       dto,
       req.user?.id ?? req.user?.sub ?? 'unknown',
+      {
+        userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
@@ -156,6 +169,11 @@ export class IncidentReviewsController {
       actionId,
       dto,
       req.user?.id ?? req.user?.sub ?? 'unknown',
+      {
+        userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
