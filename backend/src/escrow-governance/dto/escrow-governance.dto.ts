@@ -7,6 +7,7 @@ import {
     IsPositive,
     IsString,
     IsUUID,
+    Matches,
     Max,
     Min,
 } from 'class-validator';
@@ -126,4 +127,12 @@ export class EmergencySuspendDto {
     @IsString()
     @IsNotEmpty()
     reason: string;
+}
+
+export class MarkExecutedDto {
+    @ApiProperty({ description: 'On-chain Stellar/Soroban transaction hash (64-char hex)' })
+    @IsString()
+    @IsNotEmpty()
+    @Matches(/^[0-9a-f]{64}$/i, { message: 'txHash must be a 64-character hex string' })
+    txHash: string;
 }
