@@ -8,8 +8,8 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, LessThan, Repository } from 'typeorm';
 
 import { AuditLogService } from '../common/audit/audit-log.service';
 
@@ -66,6 +66,7 @@ export class EscrowGovernanceService {
         private readonly policyRepo: Repository<EscrowThresholdPolicyEntity>,
         private readonly auditLog: AuditLogService,
         private readonly eventEmitter: EventEmitter2,
+        @InjectDataSource() private readonly dataSource: DataSource,
     ) { }
 
     // ── Threshold Policy Management ──────────────────────────────────────────
@@ -374,7 +375,7 @@ export class EscrowGovernanceService {
         actorRole: string,
         context?: { ipAddress?: string; userAgent?: string },
     ): Promise<EscrowProposalEntity> {
-        // Verify signer is active
+        // Verify signer is active (outside transaction — read-only fast path)
         const signer = await this.signerRepo.findOne({ where: { userId: signerId } });
         if (!signer) {
             throw new ForbiddenException(`User ${signerId} is not a registered escrow signer`);
@@ -385,118 +386,124 @@ export class EscrowGovernanceService {
             );
         }
 
-        // Load proposal
-        const proposal = await this.proposalRepo.findOne({
-            where: { id: proposalId },
-            relations: ['votes'],
-        });
-        if (!proposal) throw new NotFoundException(`Proposal ${proposalId} not found`);
+        return this.dataSource.transaction(async (manager) => {
+            // Pessimistic write lock prevents concurrent lost-update on currentApprovals (#1165)
+            const proposal = await manager.findOne(EscrowProposalEntity, {
+                where: { id: proposalId },
+                relations: ['votes'],
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!proposal) throw new NotFoundException(`Proposal ${proposalId} not found`);
 
-        // Validate proposal is still open
-        if (proposal.status !== EscrowProposalStatus.PENDING) {
-            throw new ConflictException(`Proposal is ${proposal.status} — voting is closed`);
-        }
-        if (new Date() > proposal.expiresAt) {
-            // Lazily expire
-            await this.expireProposal(proposal, signerId, actorRole);
-            throw new ConflictException('Proposal has expired');
-        }
+            if (proposal.status !== EscrowProposalStatus.PENDING) {
+                throw new ConflictException(`Proposal is ${proposal.status} — voting is closed`);
+            }
+            if (new Date() > proposal.expiresAt) {
+                proposal.status = EscrowProposalStatus.EXPIRED;
+                await manager.save(EscrowProposalEntity, proposal);
+                await this.auditLog.insert({
+                    actorId: signerId,
+                    actorRole,
+                    action: 'escrow.proposal.expired',
+                    resourceType: 'EscrowProposal',
+                    resourceId: proposal.id,
+                    nextValue: { status: EscrowProposalStatus.EXPIRED, expiredAt: new Date() },
+                });
+                throw new ConflictException('Proposal has expired');
+            }
 
-        // Anti-duplication: prevent same signer from voting twice
-        const existingVote = await this.voteRepo.findOne({
-            where: { proposalId, signerId },
-        });
-        if (existingVote) {
-            throw new ConflictException(
-                `Signer ${signerId} has already voted on proposal ${proposalId}`,
-            );
-        }
+            const existingVote = await manager.findOne(EscrowVoteEntity, {
+                where: { proposalId, signerId },
+            });
+            if (existingVote) {
+                throw new ConflictException(
+                    `Signer ${signerId} has already voted on proposal ${proposalId}`,
+                );
+            }
 
-        // Proposer cannot vote on their own proposal
-        if (proposal.proposerId === signerId) {
-            throw new ForbiddenException('Proposer cannot vote on their own proposal');
-        }
+            if (proposal.proposerId === signerId) {
+                throw new ForbiddenException('Proposer cannot vote on their own proposal');
+            }
 
-        // Persist vote
-        const vote = this.voteRepo.create({
-            proposalId,
-            signerId,
-            decision: dto.decision,
-            comment: dto.comment ?? null,
-            ipAddress: context?.ipAddress ?? null,
-            userAgent: context?.userAgent ?? null,
-        });
-        await this.voteRepo.save(vote);
-
-        await this.auditLog.insert({
-            actorId: signerId,
-            actorRole,
-            action: 'escrow.vote.cast',
-            resourceType: 'EscrowProposal',
-            resourceId: proposalId,
-            nextValue: { decision: dto.decision, comment: dto.comment },
-            ipAddress: context?.ipAddress,
-            userAgent: context?.userAgent,
-        });
-
-        // Update proposal state
-        if (dto.decision === EscrowVoteDecision.REJECT) {
-            proposal.status = EscrowProposalStatus.REJECTED;
-            const saved = await this.proposalRepo.save(proposal);
+            const vote = manager.create(EscrowVoteEntity, {
+                proposalId,
+                signerId,
+                decision: dto.decision,
+                comment: dto.comment ?? null,
+                ipAddress: context?.ipAddress ?? null,
+                userAgent: context?.userAgent ?? null,
+            });
+            await manager.save(EscrowVoteEntity, vote);
 
             await this.auditLog.insert({
                 actorId: signerId,
                 actorRole,
-                action: 'escrow.proposal.rejected',
+                action: 'escrow.vote.cast',
                 resourceType: 'EscrowProposal',
                 resourceId: proposalId,
-                nextValue: { status: EscrowProposalStatus.REJECTED, rejectedBy: signerId },
+                nextValue: { decision: dto.decision, comment: dto.comment },
+                ipAddress: context?.ipAddress,
+                userAgent: context?.userAgent,
             });
 
-            this.eventEmitter.emit(
-                'escrow.proposal.rejected',
-                new EscrowProposalRejectedEvent(saved),
-            );
-            this.logger.warn(`Escrow proposal ${proposalId} REJECTED by ${signerId}`);
-            return saved;
-        }
+            if (dto.decision === EscrowVoteDecision.REJECT) {
+                proposal.status = EscrowProposalStatus.REJECTED;
+                const saved = await manager.save(EscrowProposalEntity, proposal);
 
-        // APPROVE vote
-        proposal.currentApprovals += 1;
+                await this.auditLog.insert({
+                    actorId: signerId,
+                    actorRole,
+                    action: 'escrow.proposal.rejected',
+                    resourceType: 'EscrowProposal',
+                    resourceId: proposalId,
+                    nextValue: { status: EscrowProposalStatus.REJECTED, rejectedBy: signerId },
+                });
 
-        if (proposal.currentApprovals >= proposal.requiredApprovals) {
-            proposal.status = EscrowProposalStatus.APPROVED;
-            const saved = await this.proposalRepo.save(proposal);
+                this.eventEmitter.emit(
+                    'escrow.proposal.rejected',
+                    new EscrowProposalRejectedEvent(saved),
+                );
+                this.logger.warn(`Escrow proposal ${proposalId} REJECTED by ${signerId}`);
+                return saved;
+            }
 
-            await this.auditLog.insert({
-                actorId: signerId,
-                actorRole,
-                action: 'escrow.proposal.approved',
-                resourceType: 'EscrowProposal',
-                resourceId: proposalId,
-                nextValue: {
-                    status: EscrowProposalStatus.APPROVED,
-                    currentApprovals: saved.currentApprovals,
-                    requiredApprovals: saved.requiredApprovals,
-                },
-            });
+            // APPROVE — increment on the locked row; no concurrent lost-update risk
+            proposal.currentApprovals += 1;
 
-            this.eventEmitter.emit(
-                'escrow.proposal.approved',
-                new EscrowProposalApprovedEvent(saved),
-            );
+            if (proposal.currentApprovals >= proposal.requiredApprovals) {
+                proposal.status = EscrowProposalStatus.APPROVED;
+                const saved = await manager.save(EscrowProposalEntity, proposal);
+
+                await this.auditLog.insert({
+                    actorId: signerId,
+                    actorRole,
+                    action: 'escrow.proposal.approved',
+                    resourceType: 'EscrowProposal',
+                    resourceId: proposalId,
+                    nextValue: {
+                        status: EscrowProposalStatus.APPROVED,
+                        currentApprovals: saved.currentApprovals,
+                        requiredApprovals: saved.requiredApprovals,
+                    },
+                });
+
+                this.eventEmitter.emit(
+                    'escrow.proposal.approved',
+                    new EscrowProposalApprovedEvent(saved),
+                );
+                this.logger.log(
+                    `Escrow proposal ${proposalId} APPROVED — threshold reached (${saved.currentApprovals}/${saved.requiredApprovals})`,
+                );
+                return saved;
+            }
+
+            const saved = await manager.save(EscrowProposalEntity, proposal);
             this.logger.log(
-                `Escrow proposal ${proposalId} APPROVED — threshold reached (${saved.currentApprovals}/${saved.requiredApprovals})`,
+                `Vote recorded on proposal ${proposalId}: ${dto.decision} by ${signerId} ` +
+                `(${saved.currentApprovals}/${saved.requiredApprovals})`,
             );
             return saved;
-        }
-
-        const saved = await this.proposalRepo.save(proposal);
-        this.logger.log(
-            `Vote recorded on proposal ${proposalId}: ${dto.decision} by ${signerId} ` +
-            `(${saved.currentApprovals}/${saved.requiredApprovals})`,
-        );
-        return saved;
+        });
     }
 
     async cancelProposal(
