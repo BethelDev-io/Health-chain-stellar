@@ -151,8 +151,21 @@ impl MatchingContract {
     ///    d. Supports partial matching — returns whatever is available.
     /// 5. Return a `MatchResult` with scores and partial-fulfillment flag.
     pub fn match_request(env: Env, request_id: u64) -> Result<MatchResult, MatchingError> {
-        Self::require_initialized(&env)?;
-        Self::require_not_paused(&env)?;
+        let excluded: Vec<u64> = Vec::new(&env);
+        Self::match_request_excluding(&env, request_id, &excluded)
+    }
+
+    /// Same matching algorithm as `match_request`, but drops any candidate
+    /// unit whose id is present in `excluded`. Used by `match_multiple_requests`
+    /// so units already assigned earlier in the same batch cannot be
+    /// double-allocated to a later request in that batch.
+    fn match_request_excluding(
+        env: &Env,
+        request_id: u64,
+        excluded: &Vec<u64>,
+    ) -> Result<MatchResult, MatchingError> {
+        Self::require_initialized(env)?;
+        Self::require_not_paused(env)?;
 
         // Load request
         let req_addr: Address = env
@@ -160,7 +173,7 @@ impl MatchingContract {
             .instance()
             .get(&DataKey::RequestsContract)
             .unwrap();
-        let req_client = RequestsContractClient::new(&env, &req_addr);
+        let req_client = RequestsContractClient::new(env, &req_addr);
         let request = req_client
             .try_get_request(&request_id)
             .map_err(|_| MatchingError::RequestNotFound)?
@@ -176,23 +189,26 @@ impl MatchingContract {
             .instance()
             .get(&DataKey::InventoryContract)
             .unwrap();
-        let inv_client = InventoryContractClient::new(&env, &inv_addr);
+        let inv_client = InventoryContractClient::new(env, &inv_addr);
 
-        let compatible_types = compatible_donor_types(&env, request.blood_type);
+        let compatible_types = compatible_donor_types(env, request.blood_type);
 
-        let mut candidates: Vec<BloodUnit> = Vec::new(&env);
+        let mut candidates: Vec<BloodUnit> = Vec::new(env);
         for i in 0..compatible_types.len() {
             let bt = compatible_types.get(i).unwrap();
             let unit_ids = inv_client
                 .try_get_units_by_blood_type(&bt)
-                .unwrap_or(Ok(Vec::new(&env)))
-                .unwrap_or(Vec::new(&env));
+                .unwrap_or(Ok(Vec::new(env)))
+                .unwrap_or(Vec::new(env));
 
             for j in 0..unit_ids.len() {
                 if candidates.len() >= MAX_MATCH_CANDIDATES.try_into().unwrap() {
                     break;
                 }
                 let uid = unit_ids.get(j).unwrap();
+                if excluded.contains(uid) {
+                    continue;
+                }
                 if let Ok(Ok(unit)) = inv_client.try_get_blood_unit(&uid) {
                     candidates.push_back(unit);
                 }
@@ -204,7 +220,7 @@ impl MatchingContract {
 
         let now = env.ledger().timestamp();
         let matched = select_units(
-            &env,
+            env,
             candidates,
             request.blood_type,
             request.urgency,
@@ -291,10 +307,17 @@ impl MatchingContract {
             }
         }
 
+        // Track units already assigned earlier in this batch so a later
+        // request in the same call cannot be matched to the same unit as an
+        // earlier one (each sub-match otherwise sees inventory as untouched).
+        let mut assigned: Vec<u64> = Vec::new(&env);
         let mut results: Vec<MatchResult> = Vec::new(&env);
         for i in 0..requests.len() {
             let req = requests.get(i).unwrap();
-            let result = Self::match_request(env.clone(), req.id)?;
+            let result = Self::match_request_excluding(&env, req.id, &assigned)?;
+            for j in 0..result.matched_units.len() {
+                assigned.push_back(result.matched_units.get(j).unwrap().unit_id);
+            }
             results.push_back(result);
         }
 
