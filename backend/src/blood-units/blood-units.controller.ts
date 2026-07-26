@@ -195,7 +195,9 @@ export class BloodUnitsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBloodStatusDto,
     @Req()
-    request: Request & { user?: { id: string; role: string } },
+    request: Request & {
+      user?: { id: string; role: string; organizationId?: string | null };
+    },
   ) {
     return this.bloodStatusService.updateStatus(id, dto, request.user);
   }
@@ -207,7 +209,9 @@ export class BloodUnitsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReserveBloodUnitDto,
     @Req()
-    request: Request & { user?: { id: string; role: string } },
+    request: Request & {
+      user?: { id: string; role: string; organizationId?: string | null };
+    },
   ) {
     return this.bloodStatusService.reserveUnit(id, dto, request.user);
   }
@@ -224,7 +228,9 @@ export class BloodUnitsController {
   async bulkUpdateStatus(
     @Body() dto: BulkUpdateBloodStatusDto,
     @Req()
-    request: Request & { user?: { id: string; role: string } },
+    request: Request & {
+      user?: { id: string; role: string; organizationId?: string | null };
+    },
   ) {
     return this.bloodStatusService.bulkUpdateStatus(dto, request.user);
   }

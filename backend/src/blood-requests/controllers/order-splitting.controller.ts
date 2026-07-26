@@ -8,12 +8,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RequirePermissions } from '../../auth/decorators/require-permissions.decorator';
+import { Permission } from '../../auth/enums/permission.enum';
 import { OrderSplittingService } from '../services/order-splitting.service';
-import { CreateSplitOrderDto } from '../dto/split-order.dto';
+import { CreateSplitOrderDto, UpdateLegStatusDto } from '../dto/split-order.dto';
 import { BloodRequestEntity } from '../entities/blood-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { FulfillmentLegStatus } from '../entities/fulfillment-leg.entity';
 
 @ApiTags('Blood Requests')
 @ApiBearerAuth()
@@ -28,6 +29,7 @@ export class OrderSplittingController {
 
   @ApiOperation({ summary: 'Post' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.CREATE_ORDER)
   @Post()
   async createSplitOrder(@Body() dto: CreateSplitOrderDto) {
     const parentRequest = await this.bloodRequestRepository.findOne({
@@ -46,6 +48,7 @@ export class OrderSplittingController {
 
   @ApiOperation({ summary: 'Get :parentRequestId progress' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':parentRequestId/progress')
   async getOrderProgress(@Param('parentRequestId') parentRequestId: string) {
     return this.orderSplittingService.getParentOrderProgress(parentRequestId);
@@ -53,6 +56,7 @@ export class OrderSplittingController {
 
   @ApiOperation({ summary: 'Get :parentRequestId legs' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
+  @RequirePermissions(Permission.VIEW_ORDER)
   @Get(':parentRequestId/legs')
   async getFulfillmentLegs(@Param('parentRequestId') parentRequestId: string) {
     return this.orderSplittingService.getFulfillmentLegs(parentRequestId);
@@ -60,15 +64,11 @@ export class OrderSplittingController {
 
   @ApiOperation({ summary: 'Patch legs :legId status' })
   @ApiResponse({ status: 200, description: 'Resource updated successfully' })
+  @RequirePermissions(Permission.UPDATE_ORDER)
   @Patch('legs/:legId/status')
   async updateLegStatus(
     @Param('legId') legId: string,
-    @Body()
-    body: {
-      status: FulfillmentLegStatus;
-      failureReason?: string;
-      deliveryTime?: number;
-    },
+    @Body() body: UpdateLegStatusDto,
   ) {
     return this.orderSplittingService.updateLegStatus(legId, body.status, {
       failureReason: body.failureReason,
@@ -78,6 +78,7 @@ export class OrderSplittingController {
 
   @ApiOperation({ summary: 'Post legs :legId fail' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
+  @RequirePermissions(Permission.UPDATE_ORDER)
   @Post('legs/:legId/fail')
   async markLegAsFailed(
     @Param('legId') legId: string,
