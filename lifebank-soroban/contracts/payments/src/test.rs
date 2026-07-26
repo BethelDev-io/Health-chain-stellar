@@ -800,16 +800,16 @@ fn test_vesting_pre_cliff_claim_fails() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
 
-    // cliff = now + 1000s, duration = 2000s
-    env.ledger().with_mut(|l| l.timestamp = 5000);
-    client.create_vesting(&admin, &donor, &1_000_000i128, &1000u64, &2000u64);
-
     // Deploy reward token and mint to contract so it can transfer
     let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
 
+    // cliff = now + 1000s, duration = 2000s
+    env.ledger().with_mut(|l| l.timestamp = 5000);
+    client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &1000u64, &2000u64);
+
     // Try to claim at t=5500 (before cliff at t=6000)
     env.ledger().with_mut(|l| l.timestamp = 5500);
-    let result = client.try_claim_vested(&donor, &token_id);
+    let result = client.try_claim_vested(&donor);
     assert_eq!(
         result,
         Err(Ok(Error::CliffNotReached)),
@@ -824,15 +824,15 @@ fn test_vesting_partial_claim_at_50_percent() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
 
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+
     // cliff = now + 0 (immediate), duration = 2000s → vest_end = now + 2000
     env.ledger().with_mut(|l| l.timestamp = 10_000);
-    client.create_vesting(&admin, &donor, &1_000_000i128, &0u64, &2000u64);
-
-    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+    client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &2000u64);
 
     // Advance to 50% of vesting duration (cliff == vest_start == 10_000, vest_end == 12_000)
     env.ledger().with_mut(|l| l.timestamp = 11_000); // 1000s elapsed of 2000s
-    let claimed = client.claim_vested(&donor, &token_id);
+    let claimed = client.claim_vested(&donor);
     assert_eq!(
         claimed, 500_000i128,
         "50% vesting should yield half the total"
@@ -849,14 +849,14 @@ fn test_vesting_full_claim_after_vest_end() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
 
-    env.ledger().with_mut(|l| l.timestamp = 1_000);
-    client.create_vesting(&admin, &donor, &500_000i128, &0u64, &1000u64);
-
     let token_id = deploy_token_with_balance(&env, &admin, &cid, 500_000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &token_id, &500_000i128, &0u64, &1000u64);
 
     // Advance past vest_end
     env.ledger().with_mut(|l| l.timestamp = 3_000);
-    let claimed = client.claim_vested(&donor, &token_id);
+    let claimed = client.claim_vested(&donor);
     assert_eq!(claimed, 500_000i128, "Full amount claimable after vest end");
 
     let schedule = client.get_vesting(&donor);
@@ -871,18 +871,18 @@ fn test_vesting_cannot_exceed_total_amount() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
 
-    env.ledger().with_mut(|l| l.timestamp = 1_000);
-    client.create_vesting(&admin, &donor, &1_000_000i128, &0u64, &1000u64);
-
     let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &token_id, &1_000_000i128, &0u64, &1000u64);
 
     // Claim full amount after vest end
     env.ledger().with_mut(|l| l.timestamp = 5_000);
-    let first = client.claim_vested(&donor, &token_id);
+    let first = client.claim_vested(&donor);
     assert_eq!(first, 1_000_000i128);
 
     // Second claim should fail with NothingToClaim
-    let result = client.try_claim_vested(&donor, &token_id);
+    let result = client.try_claim_vested(&donor);
     assert_eq!(
         result,
         Err(Ok(Error::NothingToClaim)),
@@ -893,13 +893,14 @@ fn test_vesting_cannot_exceed_total_amount() {
 /// Non-admin cannot create a vesting schedule.
 #[test]
 fn test_vesting_only_admin_can_create() {
-    let (env, cid, _admin) = setup_with_admin();
+    let (env, cid, admin) = setup_with_admin();
     let client = PaymentContractClient::new(&env, &cid);
     let attacker = Address::generate(&env);
     let donor = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
-    let result = client.try_create_vesting(&attacker, &donor, &1_000i128, &100u64, &500u64);
+    let result = client.try_create_vesting(&attacker, &donor, &token_id, &1_000i128, &100u64, &500u64);
     assert!(result.is_err(), "Non-admin must not create vesting");
 }
 
@@ -908,14 +909,15 @@ fn test_vesting_rejects_cliff_gte_duration() {
     let (env, cid, admin) = setup_with_admin();
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000);
 
     env.ledger().with_mut(|l| l.timestamp = 1_000);
     // cliff_secs = 500, duration_secs = 500 (equal)
-    let result = client.try_create_vesting(&admin, &donor, &1_000i128, &500u64, &500u64);
+    let result = client.try_create_vesting(&admin, &donor, &token_id, &1_000i128, &500u64, &500u64);
     assert_eq!(result, Err(Ok(Error::InvalidVestingSchedule)));
 
     // cliff_secs = 600, duration_secs = 500 (cliff > duration)
-    let result = client.try_create_vesting(&admin, &donor, &1_000i128, &600u64, &500u64);
+    let result = client.try_create_vesting(&admin, &donor, &token_id, &1_000i128, &600u64, &500u64);
     assert_eq!(result, Err(Ok(Error::InvalidVestingSchedule)));
 }
 
@@ -1015,13 +1017,13 @@ fn test_vesting_events_emitted() {
     let client = PaymentContractClient::new(&env, &cid);
     let donor = Address::generate(&env);
 
-    env.ledger().with_mut(|l| l.timestamp = 1_000);
-    client.create_vesting(&admin, &donor, &200_000i128, &0u64, &1000u64);
-
     let token_id = deploy_token_with_balance(&env, &admin, &cid, 200_000);
 
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &token_id, &200_000i128, &0u64, &1000u64);
+
     env.ledger().with_mut(|l| l.timestamp = 2_500); // past vest_end
-    client.claim_vested(&donor, &token_id);
+    client.claim_vested(&donor);
 
     // Events are published — verify no panic and schedule is updated
     let schedule = client.get_vesting(&donor);
