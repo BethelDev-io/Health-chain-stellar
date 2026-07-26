@@ -115,11 +115,11 @@ export class DisputesService {
     return this.disputeRepo.save(d);
   }
 
-  async resolve(id: string, dto: ResolveDisputeDto): Promise<DisputeEntity> {
+  async resolve(id: string, dto: ResolveDisputeDto, resolvedBy: string): Promise<DisputeEntity> {
     const d = await this.get(id);
     d.resolutionNotes = dto.resolutionNotes;
     d.outcome = dto.outcome;
-    d.resolvedBy = dto.resolvedBy;
+    d.resolvedBy = resolvedBy;
     d.status = DisputeStatus.RESOLVED;
     d.resolvedAt = new Date();
     d.timeoutProcessedAt = d.timeoutProcessedAt ?? new Date();
