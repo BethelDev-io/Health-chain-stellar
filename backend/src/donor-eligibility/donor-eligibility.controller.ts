@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { User } from '../auth/decorators/user.decorator';
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { PermissionsService, UserContext } from '../auth/permissions.service';
 import { DonorEligibilityService } from './donor-eligibility.service';
 import { CreateDeferralDto, OverrideDeferralDto, SimulateEligibilityDto } from './dto/create-deferral.dto';
 import { EligibilityRuleVersionEntity } from './entities/eligibility-rule-version.entity';
@@ -11,19 +12,32 @@ import { EligibilityRuleVersionEntity } from './entities/eligibility-rule-versio
 @ApiBearerAuth()
 @Controller('donor-eligibility')
 export class DonorEligibilityController {
-  constructor(private readonly service: DonorEligibilityService) {}
+  constructor(
+    private readonly service: DonorEligibilityService,
+    private readonly permissionsService: PermissionsService,
+  ) {}
 
   @ApiOperation({ summary: 'Get :donorId' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':donorId')
-  checkEligibility(@Param('donorId') donorId: string) {
-    return this.service.checkEligibility(donorId);
+  checkEligibility(
+    @Param('donorId') donorId: string,
+    @User() user: UserContext,
+    @Query('dateOfBirth') dateOfBirth?: string,
+    @Query('lastDonationDate') lastDonationDate?: string,
+  ) {
+    this.permissionsService.assertIsAdminOrSelf(user, donorId);
+    return this.service.checkEligibility(donorId, undefined, {
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      lastDonationDate: lastDonationDate ? new Date(lastDonationDate) : undefined,
+    });
   }
 
   @ApiOperation({ summary: 'Get :donorId deferrals' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':donorId/deferrals')
-  getDeferrals(@Param('donorId') donorId: string) {
+  getDeferrals(@Param('donorId') donorId: string, @User() user: UserContext) {
+    this.permissionsService.assertIsAdminOrSelf(user, donorId);
     return this.service.getDeferrals(donorId);
   }
 
@@ -46,6 +60,7 @@ export class DonorEligibilityController {
   @ApiOperation({ summary: 'Delete deferrals :id' })
   @ApiResponse({ status: 200, description: 'Resource deleted successfully' })
   @Delete('deferrals/:id')
+  @RequirePermissions(Permission.ADMIN_ACCESS)
   revokeDeferral(@Param('id') id: string) {
     return this.service.revokeDeferral(id);
   }
