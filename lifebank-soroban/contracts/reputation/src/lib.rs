@@ -290,6 +290,20 @@ impl ReputationContract {
         Ok(())
     }
 
+    /// Reject caller-supplied timestamps that lie in the future relative to
+    /// the current ledger time. Rating/assignment/fraud timestamps feed
+    /// directly into recency weighting (`weighted_rating_score`) and
+    /// inactivity decay (`decay_penalty`) — an unbounded future timestamp
+    /// lets a caller force maximum recency weight and permanently defeat
+    /// decay, so it must be validated against ledger time rather than
+    /// trusted as-is.
+    fn require_valid_timestamp(env: &Env, timestamp: u64) -> Result<(), Error> {
+        if timestamp > env.ledger().timestamp() {
+            return Err(Error::InvalidInput);
+        }
+        Ok(())
+    }
+
     /// Backward-compatible initializer wrapper.
     pub fn init(env: Env, admin: Address) {
         Self::initialize(env, admin).unwrap();
@@ -346,6 +360,7 @@ impl ReputationContract {
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         if !(1..=5).contains(&score) {
             return Err(Error::InvalidRating);
         }
@@ -398,6 +413,7 @@ impl ReputationContract {
         timestamp: u64,
     ) -> Result<ReputationScore, Error> {
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
             .storage()
             .persistent()
@@ -431,6 +447,7 @@ impl ReputationContract {
     /// Flag an entity for fraud and recalculate score.
     pub fn flag_fraud(env: Env, entity_id: u64, timestamp: u64) -> Result<ReputationScore, Error> {
         Self::require_not_paused(&env)?;
+        Self::require_valid_timestamp(&env, timestamp)?;
         let mut input: ReputationInput = env
             .storage()
             .persistent()
