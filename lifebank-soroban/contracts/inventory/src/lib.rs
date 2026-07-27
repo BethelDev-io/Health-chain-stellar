@@ -808,12 +808,12 @@ impl InventoryContract {
     /// - Requests contract's admin authenticates the cancellation decision (via cancel_request
     ///   or update_request_status requiring caller.require_auth())
     /// - Requests contract invokes this function with its own address as `authorized_contract`
-    /// - Inventory verifies that the caller IS that contract, trusting it as a valid intermediary
+    /// - Inventory calls `authorized_contract.require_auth()` to verify the caller identity
     /// - This avoids requiring the requests contract's admin to re-sign at the inventory level
     ///
     /// # Arguments
     /// * `authorized_contract` - The address of the contract making the release decision
-    ///   (typically the requests contract). Must equal current_contract_address().
+    ///   (typically the requests contract).
     /// * `reservation_id` - ID of the reservation to release
     ///
     /// # Errors
@@ -827,15 +827,12 @@ impl InventoryContract {
     ) -> Result<(), ContractError> {
         Self::require_not_paused(&env)?;
 
-        // Verify that the caller is the contract we expect (requests contract).
-        // This establishes the cross-contract authorization chain:
-        // hospital/admin calls requests::cancel_request/update_request_status with require_auth()
-        // -> requests contract calls inventory::release_reservation_by_contract(requests_addr)
-        // -> we verify that env.current_contract_address() == authorized_contract
-        // The requests contract is trusted to make release decisions after its own authorization checks.
-        if &env.current_contract_address() != authorized_contract {
-            return Err(ContractError::Unauthorized);
-        }
+        // Verify that the caller is the expected contract using Soroban's
+        // standard cross-contract auth pattern. The requests contract passes
+        // its own address as `authorized_contract`; require_auth() on that
+        // address proves that the authenticated caller is indeed the requests
+        // contract (not a random contract or user).
+        authorized_contract.require_auth();
 
         let reservation = storage::get_reservation(&env, reservation_id)
             .ok_or(ContractError::ReservationNotFound)?;
@@ -892,7 +889,6 @@ impl InventoryContract {
         reservation: &Reservation,
         reservation_id: u64,
     ) -> Result<(), ContractError> {
-
         let registry_id: Option<Address> =
             env.storage().instance().get(&DataKey::RegistryContractId);
 
