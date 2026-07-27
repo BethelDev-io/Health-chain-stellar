@@ -24,6 +24,12 @@ pub const RESERVATION_TTL_MIN_LEDGERS: u32 = 60; // ~5 minutes
 /// a single read never loads the entire history of a high-traffic unit.
 const HISTORY_PAGE_SIZE: u32 = 50;
 
+/// Maximum index entries per page (Issue #1142 fix).
+/// Following the same pattern as custody events (MAX_EVENTS_PER_PAGE = 20),
+/// we limit index pages to prevent unbounded storage growth for BankIndex,
+/// DonorIndex, BloodTypeIndex, and StatusIndex.
+const INDEX_PAGE_SIZE: u32 = 20;
+
 // ── Admin ──────────────────────────────────────────────────────────────────────
 
 pub fn get_admin(env: &Env) -> Address {
@@ -93,84 +99,185 @@ pub fn blood_unit_exists(env: &Env, id: u64) -> bool {
 }
 
 // ── Indexes ────────────────────────────────────────────────────────────────────
+// Issue #1142 fix: All indexes now use pagination to prevent unbounded growth.
+// Each index has a metadata key storing the current page number, and page keys
+// storing vectors of up to INDEX_PAGE_SIZE unit IDs. When a page is full, a new
+// page is created. This mirrors the pattern already used for StatusHistory.
 
 pub fn add_to_blood_type_index(env: &Env, blood_unit: &BloodUnit) {
-    let key = DataKey::BloodTypeIndex(blood_unit.blood_type);
-    let mut units: Vec<u64> = env
+    let meta_key = DataKey::BloodTypeIndexMeta(blood_unit.blood_type);
+    let current_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    
+    let page_key = DataKey::BloodTypeIndexPage(blood_unit.blood_type, current_page);
+    let mut page: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&key)
+        .get(&page_key)
         .unwrap_or(Vec::new(env));
-    units.push_back(blood_unit.id);
-    env.storage().persistent().set(&key, &units);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    
+    if page.len() >= INDEX_PAGE_SIZE {
+        // Current page is full — start a new one
+        let next_page = current_page + 1;
+        env.storage().persistent().set(&meta_key, &next_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        
+        let new_page_key = DataKey::BloodTypeIndexPage(blood_unit.blood_type, next_page);
+        let mut new_page: Vec<u64> = Vec::new(env);
+        new_page.push_back(blood_unit.id);
+        env.storage().persistent().set(&new_page_key, &new_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    } else {
+        page.push_back(blood_unit.id);
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 pub fn add_to_bank_index(env: &Env, blood_unit: &BloodUnit) {
-    let key = DataKey::BankIndex(blood_unit.bank_id.clone());
-    let mut units: Vec<u64> = env
+    let meta_key = DataKey::BankIndexMeta(blood_unit.bank_id.clone());
+    let current_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    
+    let page_key = DataKey::BankIndexPage(blood_unit.bank_id.clone(), current_page);
+    let mut page: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&key)
+        .get(&page_key)
         .unwrap_or(Vec::new(env));
-    units.push_back(blood_unit.id);
-    env.storage().persistent().set(&key, &units);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    
+    if page.len() >= INDEX_PAGE_SIZE {
+        // Current page is full — start a new one
+        let next_page = current_page + 1;
+        env.storage().persistent().set(&meta_key, &next_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        
+        let new_page_key = DataKey::BankIndexPage(blood_unit.bank_id.clone(), next_page);
+        let mut new_page: Vec<u64> = Vec::new(env);
+        new_page.push_back(blood_unit.id);
+        env.storage().persistent().set(&new_page_key, &new_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    } else {
+        page.push_back(blood_unit.id);
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 pub fn add_to_status_index(env: &Env, blood_unit: &BloodUnit) {
-    let key = DataKey::StatusIndex(blood_unit.status);
-    let mut units: Vec<u64> = env
+    let meta_key = DataKey::StatusIndexMeta(blood_unit.status);
+    let current_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    
+    let page_key = DataKey::StatusIndexPage(blood_unit.status, current_page);
+    let mut page: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&key)
+        .get(&page_key)
         .unwrap_or(Vec::new(env));
-    units.push_back(blood_unit.id);
-    env.storage().persistent().set(&key, &units);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    
+    if page.len() >= INDEX_PAGE_SIZE {
+        // Current page is full — start a new one
+        let next_page = current_page + 1;
+        env.storage().persistent().set(&meta_key, &next_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        
+        let new_page_key = DataKey::StatusIndexPage(blood_unit.status, next_page);
+        let mut new_page: Vec<u64> = Vec::new(env);
+        new_page.push_back(blood_unit.id);
+        env.storage().persistent().set(&new_page_key, &new_page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    } else {
+        page.push_back(blood_unit.id);
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 /// Remove a single ID from a status index bucket.
-/// Uses a single-pass rebuild — O(n) but only called on transitions, not reads.
+/// Scans all pages until the ID is found, rebuilds that page without it.
 pub fn remove_from_status_index(env: &Env, blood_unit_id: u64, old_status: BloodStatus) {
-    let key = DataKey::StatusIndex(old_status);
-    let units: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(env));
-    let mut updated: Vec<u64> = Vec::new(env);
-    for i in 0..units.len() {
-        let id = units.get(i).unwrap();
-        if id != blood_unit_id {
-            updated.push_back(id);
+    let meta_key = DataKey::StatusIndexMeta(old_status);
+    let last_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+    
+    for p in 0..=last_page {
+        let page_key = DataKey::StatusIndexPage(old_status, p);
+        let units: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or(Vec::new(env));
+        
+        let mut updated: Vec<u64> = Vec::new(env);
+        let mut found = false;
+        for i in 0..units.len() {
+            let id = units.get(i).unwrap();
+            if id != blood_unit_id {
+                updated.push_back(id);
+            } else {
+                found = true;
+            }
+        }
+        
+        if found {
+            env.storage().persistent().set(&page_key, &updated);
+            env.storage()
+                .persistent()
+                .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            return;
         }
     }
-    env.storage().persistent().set(&key, &updated);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn add_to_donor_index(env: &Env, blood_unit: &BloodUnit) {
     if let Some(donor) = &blood_unit.donor_id {
-        let key = DataKey::DonorIndex(donor.clone());
-        let mut units: Vec<u64> = env
+        let meta_key = DataKey::DonorIndexMeta(donor.clone());
+        let current_page: u32 = env.storage().persistent().get(&meta_key).unwrap_or(0);
+        
+        let page_key = DataKey::DonorIndexPage(donor.clone(), current_page);
+        let mut page: Vec<u64> = env
             .storage()
             .persistent()
-            .get(&key)
+            .get(&page_key)
             .unwrap_or(Vec::new(env));
-        units.push_back(blood_unit.id);
-        env.storage().persistent().set(&key, &units);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        
+        if page.len() >= INDEX_PAGE_SIZE {
+            // Current page is full — start a new one
+            let next_page = current_page + 1;
+            env.storage().persistent().set(&meta_key, &next_page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&meta_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+            
+            let new_page_key = DataKey::DonorIndexPage(donor.clone(), next_page);
+            let mut new_page: Vec<u64> = Vec::new(env);
+            new_page.push_back(blood_unit.id);
+            env.storage().persistent().set(&new_page_key, &new_page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&new_page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        } else {
+            page.push_back(blood_unit.id);
+            env.storage().persistent().set(&page_key, &page);
+            env.storage()
+                .persistent()
+                .extend_ttl(&page_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
     }
 }
 

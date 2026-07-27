@@ -283,6 +283,20 @@ pub enum DataKey {
     /// Index: Donor ID -> Vec<u64> (blood unit IDs)
     DonorIndex(Address),
 
+    /// Paginated index metadata: stores current page number for an index
+    /// Issue #1142 fix: Add pagination metadata for indexes to prevent unbounded growth
+    BankIndexMeta(Address),
+    DonorIndexMeta(Address),
+    BloodTypeIndexMeta(BloodType),
+    StatusIndexMeta(BloodStatus),
+
+    /// One page of index data: (index_key, page_number) -> Vec<u64>
+    /// Issue #1142 fix: Store index pages separately with fixed size limit
+    BankIndexPage(Address, u32),
+    DonorIndexPage(Address, u32),
+    BloodTypeIndexPage(BloodType, u32),
+    StatusIndexPage(BloodStatus, u32),
+
     /// Authorized blood bank address
     AuthorizedBank(Address),
 

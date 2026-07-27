@@ -734,8 +734,17 @@ impl InventoryContract {
         }
 
         // Validate all units before making any changes (all-or-nothing)
+        // Issue #1143 fix: Track seen unit IDs to prevent double-counting
+        let mut seen_units = Map::<u64, bool>::new(&env);
         for i in 0..unit_ids.len() {
             let unit_id = unit_ids.get(i).ok_or(ContractError::NotFound)?;
+            
+            // Check for duplicate unit ID
+            if seen_units.contains_key(unit_id) {
+                return Err(ContractError::DuplicateBloodUnit);
+            }
+            seen_units.set(unit_id, true);
+            
             let unit = storage::get_blood_unit(&env, unit_id).ok_or(ContractError::NotFound)?;
 
             // Explicit ownership check: prove that every selected unit belongs to the blood bank performing the action.
