@@ -14,25 +14,30 @@ import {
   UnauthorizedException,
   ConflictException,
   Req,
-  Query,
   Header,
 } from '@nestjs/common';
-
 import { ConfigService } from '@nestjs/config';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+
 import { Request } from 'express';
 
-import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
-import { AdminGuard } from '../guards/admin.guard';
 import { RequireAdminScope } from '../decorators/require-admin-scope.decorator';
+import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
+import { SubmitTransactionDto } from '../dto/submit-transaction.dto';
 import { AdminScope } from '../enums/admin-scope.enum';
+import { AdminGuard } from '../guards/admin.guard';
+import { BlockchainHealthService } from '../services/blockchain-health.service';
 import { DlqReplayAuditService } from '../services/dlq-replay-audit.service';
+import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
 
-import type {
-  SorobanTxJob,
-  QueueMetrics,
-  SorobanTxResult,
-} from '../types/soroban-tx.types';
+import type { QueueMetrics, SorobanTxResult } from '../types/soroban-tx.types';
 
 @ApiTags('Blockchain')
 @ApiBearerAuth()
@@ -62,9 +67,11 @@ export class BlockchainController {
   @ApiOperation({ summary: 'Post submit transaction' })
   @ApiResponse({ status: 201, description: 'Resource created successfully' })
   @Post('submit-transaction')
+  @UseGuards(AdminGuard)
+  @RequireAdminScope(AdminScope.ADMIN_FULL)
   @HttpCode(HttpStatus.ACCEPTED)
   async submitTransaction(
-    @Body() job: SorobanTxJob,
+    @Body() job: SubmitTransactionDto,
   ): Promise<{ jobId: string }> {
     const jobId = await this.sorobanService.submitTransaction(job);
     return { jobId };
@@ -341,9 +348,6 @@ export class BlockchainController {
 
     for (const record of failed) {
       try {
-        const job =
-          record.payload as unknown as import('../types/soroban-tx.types').SorobanTxJob;
-
         // Resubmit via DLQ replay (clears idempotency key internally)
         await this.sorobanService.replayDlqJobs({ batchSize: 1 });
 
