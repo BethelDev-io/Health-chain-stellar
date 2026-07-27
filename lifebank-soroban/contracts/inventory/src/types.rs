@@ -46,7 +46,7 @@ pub enum BloodStatus {
     InTransit,
     /// Successfully delivered to recipient/hospital
     Delivered,
-    /// Expired and no longer usable (typically after 42 days for whole blood)
+    /// Expired and no longer usable (typically 35 days for whole blood)
     Expired,
     /// Compromised due to 3 consecutive temperature violations - unsafe for use
     Compromised,
@@ -87,7 +87,7 @@ pub struct BloodUnit {
     pub donation_timestamp: u64,
 
     /// Unix timestamp (seconds) when unit expires
-    /// Typically 42 days from donation for whole blood
+    /// 35 days from donation for whole blood
     /// 5 days for platelets, 1 year for frozen plasma
     pub expiration_timestamp: u64,
 

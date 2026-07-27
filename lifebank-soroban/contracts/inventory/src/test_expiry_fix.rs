@@ -33,9 +33,9 @@ mod expiry_tests {
         let unit = client.get_blood_unit(&unit_id);
         assert_eq!(unit.status, crate::types::BloodStatus::Available);
 
-        // Fast-forward time past expiration (42 days shelf life + 1 day)
+        // Fast-forward time past expiration (35 days shelf life + 1 day)
         env.ledger().with_mut(|li| {
-            li.timestamp += 43 * 24 * 3600; // 43 days in seconds
+            li.timestamp += 36 * 24 * 3600; // 36 days in seconds
         });
 
         // Attempt to reserve the expired unit
@@ -179,5 +179,70 @@ mod expiry_tests {
 
         // Release it cleanly
         client.release_reservation(&bank, &reservation_id);
+    }
+
+    /// Boundary test: unit is still valid one second before expiration_timestamp.
+    /// Verifies the real 35-day boundary via reserve_blood (end-to-end).
+    #[test]
+    fn test_unit_reservable_one_second_before_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(InventoryContract, ());
+        let client = InventoryContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let bank = Address::generate(&env);
+
+        client.initialize(&admin);
+        client.authorize_bank(&admin, &bank, &true);
+
+        let serial = SorobanString::from_str(&env, "BOUNDARY-BEFORE");
+        let unit_id = client.register_blood(&bank, &serial, &BloodType::OPositive, &450, &None);
+
+        // Advance to exactly 1 second before expiration_timestamp
+        // expiration = donation_time + BLOOD_SHELF_LIFE_DAYS * SECONDS_PER_DAY
+        //            = 0 + 35 * 86400 = 3_024_000
+        // so advance to 3_024_000 - 1 = 3_023_999
+        env.ledger().with_mut(|li| {
+            li.timestamp = 35 * 86_400 - 1;
+        });
+
+        let mut unit_ids = soroban_sdk::Vec::new(&env);
+        unit_ids.push_back(unit_id);
+
+        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &1u64);
+        assert!(result.is_ok(), "Unit must be reservable 1 second before expiry");
+    }
+
+    /// Boundary test: unit is expired at exactly expiration_timestamp.
+    /// Verifies the real 35-day boundary via reserve_blood (end-to-end).
+    #[test]
+    fn test_unit_not_reservable_at_expiry_timestamp() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(InventoryContract, ());
+        let client = InventoryContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let bank = Address::generate(&env);
+
+        client.initialize(&admin);
+        client.authorize_bank(&admin, &bank, &true);
+
+        let serial = SorobanString::from_str(&env, "BOUNDARY-AT");
+        let unit_id = client.register_blood(&bank, &serial, &BloodType::OPositive, &450, &None);
+
+        // Advance to exactly expiration_timestamp = 35 * 86400
+        env.ledger().with_mut(|li| {
+            li.timestamp = 35 * 86_400;
+        });
+
+        let mut unit_ids = soroban_sdk::Vec::new(&env);
+        unit_ids.push_back(unit_id);
+
+        let result = client.try_reserve_blood(&bank, &unit_ids, &1u64, &1u64);
+        assert!(result.is_err(), "Unit must be rejected at expiration_timestamp");
     }
 }

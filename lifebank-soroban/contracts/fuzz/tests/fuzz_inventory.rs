@@ -196,9 +196,9 @@ proptest! {
         let blood_type = BloodType::ABPositive;
         let unit_id = client.register_blood(&bank, &serial, &blood_type, &quantity, &None);
 
-        // Fast-forward time past expiration (42 days = shelf life)
+        // Fast-forward time past expiration (35 days = shelf life)
         env.ledger().with_mut(|li| {
-            li.timestamp += 43 * 24 * 3600; // 43 days
+            li.timestamp += 36 * 24 * 3600; // 36 days
         });
 
         // Attempt to reserve expired unit
