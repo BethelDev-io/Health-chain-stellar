@@ -72,7 +72,7 @@
 //! 4. Use `get_archived_history_summary` to obtain the first/last timestamps
 //!    and total count for display without loading the full history.
 
-use soroban_sdk::{contracttype, symbol_short, Env, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
     BloodStatus, BloodUnit, CustodyEvent, CustodyStatus, DataKey, Error, StatusChangeEvent,
@@ -157,8 +157,13 @@ where
 
 /// Bump TTL for all per-unit storage keys associated with `unit_id`.
 ///
+/// `unit` should be the current `BloodUnit` record so that the secondary
+/// index keys (BankUnits, DonorUnits, HospitalUnits, StatusUnits) can also
+/// be extended.  Pass `None` when the unit record is not yet available (e.g.
+/// mid-write), in which case only the core keys are bumped.
+///
 /// Should be called after any write that touches a blood unit or its history.
-pub fn bump_rent_for_unit(env: &Env, unit_id: u64) {
+pub fn bump_rent_for_unit(env: &Env, unit_id: u64, unit: Option<&BloodUnit>) {
     // Blood unit record
     bump_persistent(env, &BLOOD_UNITS);
 
@@ -173,12 +178,51 @@ pub fn bump_rent_for_unit(env: &Env, unit_id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&meta_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+    // Secondary index keys — only bumpable when we have the unit record.
+    if let Some(u) = unit {
+        // BankUnits index for the owning bank.
+        let bank_key = DataKey::BankUnits(u.bank_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&bank_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // DonorUnits per-bank index.
+        let donor_key = DataKey::DonorUnits(u.bank_id.clone(), u.donor_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&donor_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // DonorUnits global cross-bank index (sentinel = current contract address).
+        let sentinel = env.current_contract_address();
+        let global_donor_key = DataKey::DonorUnits(sentinel, u.donor_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&global_donor_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // HospitalUnits index — only present after allocation.
+        if let Some(ref hospital) = u.recipient_hospital {
+            let hosp_key = DataKey::HospitalUnits(hospital.clone());
+            env.storage()
+                .persistent()
+                .extend_ttl(&hosp_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+        }
+
+        // StatusUnits index for the unit's current status.
+        let status_key = DataKey::StatusUnits(u.status);
+        env.storage()
+            .persistent()
+            .extend_ttl(&status_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    }
 }
 
 /// Bump TTL for all shared registry maps.
 ///
 /// These are the highest-risk keys because they are large and shared across
 /// all operations. Call this periodically (e.g., from an admin cron job).
+///
+/// Also extends TTL for all secondary index keys (BankUnits, DonorUnits,
+/// HospitalUnits, StatusUnits) by scanning the BLOOD_UNITS map once.
 pub fn bump_all_registries(env: &Env) {
     for key in &[
         BLOOD_BANKS,
@@ -196,6 +240,63 @@ pub fn bump_all_registries(env: &Env) {
         env.storage()
             .persistent()
             .extend_ttl(key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    }
+
+    // Bump all StatusUnits variants — these are fixed and enumerable.
+    for status in &[
+        BloodStatus::Available,
+        BloodStatus::Reserved,
+        BloodStatus::InTransit,
+        BloodStatus::Delivered,
+        BloodStatus::Quarantined,
+        BloodStatus::Expired,
+        BloodStatus::Discarded,
+    ] {
+        let key = DataKey::StatusUnits(*status);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+    }
+
+    // Bump per-actor index keys by scanning the BLOOD_UNITS map once.
+    // This is O(n) in the number of units but is only called by an admin
+    // cron job, not on every transaction.
+    use soroban_sdk::Map;
+    use crate::BloodUnit;
+
+    let units: Map<u64, BloodUnit> = env
+        .storage()
+        .persistent()
+        .get(&BLOOD_UNITS)
+        .unwrap_or(Map::new(env));
+
+    for (_unit_id, unit) in units.iter() {
+        // BankUnits index
+        let bank_key = DataKey::BankUnits(unit.bank_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&bank_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // DonorUnits per-bank index
+        let donor_key = DataKey::DonorUnits(unit.bank_id.clone(), unit.donor_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&donor_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // DonorUnits global cross-bank index
+        let sentinel = env.current_contract_address();
+        let global_donor_key = DataKey::DonorUnits(sentinel, unit.donor_id.clone());
+        env.storage()
+            .persistent()
+            .extend_ttl(&global_donor_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+
+        // HospitalUnits index (only after allocation)
+        if let Some(hospital) = unit.recipient_hospital {
+            let hosp_key = DataKey::HospitalUnits(hospital);
+            env.storage()
+                .persistent()
+                .extend_ttl(&hosp_key, MIN_TTL_LEDGERS, EXTENDED_TTL_LEDGERS);
+        }
     }
 }
 
@@ -314,11 +415,23 @@ pub fn archive_custody_events(env: &Env, unit_id: u64) -> Result<bool, Error> {
     }
 
     let current_time = env.ledger().timestamp();
-    // Require the same cooling-off window as history archival
-    let terminal_timestamp = unit
-        .delivery_timestamp
-        .or(unit.transfer_timestamp)
-        .unwrap_or(0);
+    // Derive the terminal timestamp from the unit's last actual history event,
+    // matching the approach used by archive_unit_history.  Using
+    // delivery_timestamp / transfer_timestamp is wrong for Discarded/Expired
+    // units — those fields are never set, causing terminal_timestamp to fall
+    // back to 0 and the guard to be bypassed entirely (current_time is always
+    // >> ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY for any real timestamp).
+    let history_key = (HISTORY, unit_id);
+    let history: Vec<StatusChangeEvent> = env
+        .storage()
+        .persistent()
+        .get(&history_key)
+        .unwrap_or(Vec::new(env));
+    let terminal_timestamp = if history.is_empty() {
+        0u64
+    } else {
+        history.get(history.len() - 1).unwrap().timestamp
+    };
     if current_time < terminal_timestamp.saturating_add(ARCHIVE_AFTER_DAYS * SECONDS_PER_DAY) {
         return Ok(false);
     }
