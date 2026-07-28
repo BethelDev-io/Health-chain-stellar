@@ -50,6 +50,15 @@ pub struct Payment {
     pub token: Option<Address>,
 }
 
+/// Direction for dispute resolution — determines whether escrowed funds
+/// are released to the payee or refunded to the payer.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisputeResolution {
+    ReleaseToPayee,
+    RefundToPayer,
+}
+
 fn dispute_reason_to_code(reason: DisputeReason) -> u32 {
     match reason {
         DisputeReason::FailedDelivery => 1,
@@ -130,6 +139,8 @@ pub enum Error {
     ActiveVestingExists = 517,
     /// The associated request is not in a state that permits payment.
     RequestNotPayable = 512,
+    /// Payment is not in Disputed status — cannot resolve.
+    PaymentNotDisputed = 521,
     /// The request referenced by this payment does not exist.
     RequestNotFound = 513,
     /// Payment has no escrowed token — cannot release or refund funds.
@@ -1129,17 +1140,87 @@ impl PaymentContract {
         Ok(())
     }
 
-    pub fn resolve_dispute(env: Env, payment_id: u64, caller: Address) -> Result<(), Error> {
+    /// Resolve a disputed payment: either release funds to the payee or refund
+    /// them to the payer, depending on `resolution`. For escrow-backed payments
+    /// the actual token transfer is executed atomically within this call.
+    /// For bookkeeping-only (non-escrow) payments the status is updated without
+    /// any token transfer — off-chain settlement is assumed.
+    pub fn resolve_dispute(
+        env: Env,
+        payment_id: u64,
+        resolution: DisputeResolution,
+        caller: Address,
+    ) -> Result<(), Error> {
         caller.require_auth();
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
+
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
-        if payment.dispute_case_id.is_some() {
-            payment.dispute_resolved = true;
+
+        if payment.status != PaymentStatus::Disputed {
+            return Err(Error::PaymentNotDisputed);
         }
+
+        // ── Escrow: execute the token transfer ────────────────────────────
+        if let Some(ref token_addr) = payment.token {
+            let token_client = token::Client::new(&env, token_addr);
+            match resolution {
+                DisputeResolution::ReleaseToPayee => {
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &payment.payee,
+                        &payment.amount,
+                    );
+                }
+                DisputeResolution::RefundToPayer => {
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &payment.payer,
+                        &payment.amount,
+                    );
+                }
+            }
+        }
+
+        // ── Update payment state ──────────────────────────────────────────
+        let old_status = payment.status;
+        let new_status = match resolution {
+            DisputeResolution::ReleaseToPayee => PaymentStatus::Released,
+            DisputeResolution::RefundToPayer => PaymentStatus::Refunded,
+        };
+
+        payment.status = new_status;
+        payment.dispute_resolved = true;
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
+
+        remove_from_status_index(&env, old_status, payment_id);
+        index_by_status(&env, new_status, payment_id);
+        update_stats_on_transition(&env, payment.amount, old_status, new_status)?;
+        remove_from_request_index(&env, payment.request_id);
+
+        // ── Emit events ───────────────────────────────────────────────────
         PaymentResolved { payment_id }.publish(&env);
+
+        match resolution {
+            DisputeResolution::ReleaseToPayee => {
+                PaymentReleased {
+                    payment_id,
+                    payee: payment.payee.clone(),
+                    amount: payment.amount,
+                }
+                .publish(&env);
+            }
+            DisputeResolution::RefundToPayer => {
+                PaymentRefunded {
+                    payment_id,
+                    payer: payment.payer.clone(),
+                    amount: payment.amount,
+                }
+                .publish(&env);
+            }
+        }
+
         Ok(())
     }
 
