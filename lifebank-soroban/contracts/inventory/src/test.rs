@@ -2295,3 +2295,52 @@ fn test_reserve_blood_fails_on_mixed_ownership() {
     // Bank1 tries to reserve both units (but only owns one)
     client.reserve_blood(&bank1, &vec![&env, id1, id2], &123, &3600);
 }
+
+#[test]
+fn test_release_reservation_by_contract_releases_reservation() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let bank = admin.clone();
+    let hospital = Address::generate(&env);
+
+    // Register a blood unit
+    let unit_id = client.register_blood(
+        &bank,
+        &String::from_str(&env, "SN-REL-001"),
+        &BloodType::APositive,
+        &450u32,
+        &None,
+    );
+
+    // Reserve it
+    let reservation_id = client.reserve_blood(&bank, &vec![&env, unit_id], &42, &3600);
+
+    // Verify unit is Reserved
+    let stored = client.get_blood_unit(&unit_id);
+    assert_eq!(stored.status, BloodStatus::Reserved);
+
+    // Release via release_reservation_by_contract with the authorized contract
+    let authorized_addr = Address::generate(&env);
+    InventoryContract::release_reservation_by_contract(&env, &authorized_addr, reservation_id)
+        .unwrap();
+
+    // Verify unit is Available again
+    let released = client.get_blood_unit(&unit_id);
+    assert_eq!(released.status, BloodStatus::Available);
+
+    // Reservation should be removed
+    let result = client.get_reservation(&reservation_id);
+    assert_eq!(result, Err(ContractError::ReservationNotFound));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #150)")]
+fn test_release_reservation_by_contract_fails_on_unknown_reservation() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    // Try to release a non-existent reservation
+    InventoryContract::release_reservation_by_contract(&env, &Address::generate(&env), 999)
+        .unwrap();
+}
