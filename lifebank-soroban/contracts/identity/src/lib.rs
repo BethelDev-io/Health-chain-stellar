@@ -1081,6 +1081,9 @@ impl AccessControlContract {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
+        // Require the supplied admin address to sign this transaction so that
+        // an attacker cannot front-run initialization and claim admin rights.
+        admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
             .persistent()
