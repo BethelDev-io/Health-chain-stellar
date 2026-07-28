@@ -19,4 +19,7 @@ pub enum MatchingError {
 
     // Circuit breaker (630)
     ContractPaused = 630,
+
+    // Batch limits (631)
+    BatchTooLarge = 631,
 }
