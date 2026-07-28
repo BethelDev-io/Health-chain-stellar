@@ -110,6 +110,14 @@ impl TemperatureContract {
         max_celsius_x100: i32,
     ) -> Result<(), ContractError> {
         admin.require_auth();
+        // Verify the caller is the stored admin, not just that they signed
+        // their own address.  Without this check any address can pass itself
+        // as `admin`, satisfy require_auth(), and propose arbitrary threshold
+        // changes — identical to the pattern used by pause(), unpause(), etc.
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
         if min_celsius_x100 >= max_celsius_x100 {
             return Err(ContractError::InvalidThreshold);
         }
