@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod security_tests {
-    use crate::{Error, PaymentStatus, PaymentContract};
+    use crate::{Error, PaymentStatus, PaymentContract, DisputeResolution};
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
     /// #1152: Verify record_dispute requires caller to be payer or payee.
@@ -12,7 +12,6 @@ mod security_tests {
         let payer = Address::random(&env);
         let payee = Address::random(&env);
         let third_party = Address::random(&env);
-        let token = Address::random(&env);
 
         env.mock_all_auths();
 
@@ -20,11 +19,10 @@ mod security_tests {
 
         let payment_id = PaymentContract::create_payment(
             env.clone(),
+            1,
             payer.clone(),
             payee.clone(),
             100,
-            1,
-            None,
         )
         .unwrap();
 
@@ -53,11 +51,10 @@ mod security_tests {
 
         let payment_id = PaymentContract::create_payment(
             env.clone(),
+            1,
             payer.clone(),
             payee.clone(),
             100,
-            1,
-            None,
         )
         .unwrap();
 
@@ -86,11 +83,10 @@ mod security_tests {
 
         let payment_id = PaymentContract::create_payment(
             env.clone(),
+            1,
             payer.clone(),
             payee.clone(),
             100,
-            1,
-            None,
         )
         .unwrap();
 

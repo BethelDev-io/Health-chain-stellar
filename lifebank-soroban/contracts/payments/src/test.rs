@@ -1010,6 +1010,109 @@ fn test_process_expired_disputes_skips_non_disputed_payments() {
     assert_eq!(refunded.len(), 0);
 }
 
+// ── resolve_dispute escrow settlement (#1113) ─────────────────────────────────
+
+#[test]
+fn test_resolve_dispute_releases_escrow_to_payee() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
+
+    // Create escrow payment: hospital deposits 1_000 tokens
+    let pid = client.create_escrow(&1u64, &hospital, &payee, &1_000i128, &token_id);
+
+    // Verify tokens moved from hospital to contract
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    let contract_bal = token_client.balance(&cid);
+    assert_eq!(contract_bal, 1_000);
+    let payer_bal = token_client.balance(&hospital);
+    assert_eq!(payer_bal, 9_000); // started with 10_000
+
+    // Record a dispute
+    client.record_dispute(
+        &pid,
+        &DisputeReason::FailedDelivery,
+        &soroban_sdk::String::from_str(&env, "case-release"),
+        &hospital,
+    );
+
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Disputed);
+
+    // Resolve dispute in favor of payee -> release funds
+    client.resolve_dispute(&pid, &DisputeResolution::ReleaseToPayee, &admin);
+
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Released);
+    assert!(p.dispute_resolved);
+
+    // Verify tokens transferred to payee
+    let payee_bal = token_client.balance(&payee);
+    assert_eq!(payee_bal, 1_000);
+    // Contract balance should be 0 after release
+    let contract_bal_after = token_client.balance(&cid);
+    assert_eq!(contract_bal_after, 0);
+}
+
+#[test]
+fn test_resolve_dispute_refunds_escrow_to_payer() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
+
+    // Create escrow payment: hospital deposits 1_000 tokens
+    let pid = client.create_escrow(&2u64, &hospital, &payee, &1_000i128, &token_id);
+
+    // Record a dispute
+    client.record_dispute(
+        &pid,
+        &DisputeReason::DamagedGoods,
+        &soroban_sdk::String::from_str(&env, "case-refund"),
+        &payee,
+    );
+
+    // Resolve dispute in favor of payer -> refund funds
+    client.resolve_dispute(&pid, &DisputeResolution::RefundToPayer, &admin);
+
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Refunded);
+    assert!(p.dispute_resolved);
+
+    // Verify tokens refunded to payer
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    let payer_bal = token_client.balance(&hospital);
+    assert_eq!(payer_bal, 10_000); // full amount refunded
+    let contract_bal = token_client.balance(&cid);
+    assert_eq!(contract_bal, 0);
+}
+
+#[test]
+fn test_resolve_dispute_rejects_non_disputed_payment() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+
+    let hospital = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let token_id = deploy_token_with_balance(&env, &admin, &hospital, 10_000);
+
+    // Create escrow payment (Locked, not Disputed)
+    let pid = client.create_escrow(&3u64, &hospital, &payee, &500i128, &token_id);
+
+    // Try to resolve a non-disputed payment -> must fail
+    let result = client.try_resolve_dispute(&pid, &DisputeResolution::ReleaseToPayee, &admin);
+    assert_eq!(result, Err(Ok(Error::PaymentNotDisputed)));
+
+    // Payment should still be Locked
+    let p = client.get_payment(&pid);
+    assert_eq!(p.status, PaymentStatus::Locked);
+}
+
 /// VestingCreated and VestingClaimed events are emitted.
 #[test]
 fn test_vesting_events_emitted() {
