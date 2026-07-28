@@ -25,7 +25,7 @@ bench = false
 
 [[bin]]
 name = "fuzz_payments"
-path = "fuzz_targets/fuzz_payment.rs"
+path = "fuzz_targets/fuzz_payments.rs"
 test = false
 doc = false
 bench = false
