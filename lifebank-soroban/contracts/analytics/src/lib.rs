@@ -231,11 +231,15 @@ impl AnalyticsContract {
 
     /// Record a released payment with its amount. Authorized callers only (admin or domain contracts).
     pub fn record_payment_released(env: Env, amount: i128) -> Result<(), AnalyticsError> {
+        if amount <= 0 {
+            return Err(AnalyticsError::InvalidAmount);
+        }
+
         let cfg = require_authorized_caller(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
         let mut snap = load_snapshot(&env, idx);
         snap.total_payments_released += 1;
-        snap.total_volume += amount;
+        snap.total_volume = snap.total_volume.saturating_add(amount);
         snap.last_updated = env.ledger().timestamp();
         save_snapshot(&env, &snap);
 
@@ -244,7 +248,7 @@ impl AnalyticsContract {
             .persistent()
             .set(&DataKey::TotalPaymentsReleased, &total_payments);
 
-        let total_volume = get_counter_i128(&env, &DataKey::TotalVolume) + amount;
+        let total_volume = get_counter_i128(&env, &DataKey::TotalVolume).saturating_add(amount);
         env.storage()
             .persistent()
             .set(&DataKey::TotalVolume, &total_volume);
