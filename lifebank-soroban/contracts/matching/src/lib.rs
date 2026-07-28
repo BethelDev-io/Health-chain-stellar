@@ -28,6 +28,11 @@ use soroban_sdk::{contract, contractclient, contractimpl, Address, Env, Vec};
 /// Threshold chosen to stay within per-transaction compute limits with safety margin.
 const MAX_MATCH_CANDIDATES: usize = 500;
 
+/// Maximum number of request IDs accepted by `match_multiple_requests`.
+/// Enforces an explicit, graceful error instead of letting the transaction hit
+/// the instruction limit with an opaque failure.
+const MAX_BATCH_SIZE: u32 = 50;
+
 // ---------------------------------------------------------------------------
 // Cross-contract client interfaces
 // ---------------------------------------------------------------------------
@@ -255,14 +260,19 @@ impl MatchingContract {
     /// Within the same urgency level, requests with an earlier
     /// `required_by_timestamp` are processed first.
     ///
-    /// Uses insertion sort — O(n log n) average for nearly-sorted inputs,
-    /// acceptable for the small batches expected in practice (≤50 requests).
+    /// Uses insertion sort — O(n²) worst-case but acceptable for batches up to
+    /// `MAX_BATCH_SIZE`. Callers that exceed `MAX_BATCH_SIZE` receive
+    /// `MatchingError::BatchTooLarge` rather than hitting the instruction limit.
     pub fn match_multiple_requests(
         env: Env,
         request_ids: Vec<u64>,
     ) -> Result<Vec<MatchResult>, MatchingError> {
         Self::require_initialized(&env)?;
         Self::require_not_paused(&env)?;
+
+        if request_ids.len() > MAX_BATCH_SIZE {
+            return Err(MatchingError::BatchTooLarge);
+        }
 
         let req_addr: Address = env
             .storage()
