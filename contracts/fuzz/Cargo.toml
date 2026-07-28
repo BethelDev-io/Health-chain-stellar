@@ -17,13 +17,6 @@ path = ".."
 package = "healthchain"
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "fuzz_custody_transfer"
 path = "fuzz_targets/fuzz_custody_transfer.rs"
 test = false
@@ -32,7 +25,7 @@ bench = false
 
 [[bin]]
 name = "fuzz_payments"
-path = "fuzz_targets/fuzz_payments.rs"
+path = "fuzz_targets/fuzz_payment.rs"
 test = false
 doc = false
 bench = false
