@@ -29,6 +29,7 @@ pub enum Error {
     AlreadyInitialized = 700,
     NotInitialized = 701,
     DeliveryNotFound = 702,
+    Unauthorized = 703,
 }
 
 #[contracttype]
@@ -145,8 +146,56 @@ impl DeliveryContract {
             .ok_or(Error::NotInitialized)
     }
 
-    /// Record a compliance attestation hash for a completed delivery.
-    /// The hash is produced off-chain by the backend after evaluating telemetry.
+    /// Update the cold-chain temperature thresholds. Admin only.
+    pub fn set_temperature_thresholds(
+        env: Env,
+        admin: Address,
+        thresholds: TemperatureThresholds,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TemperatureThresholds, &thresholds);
+        Ok(())
+    }
+
+    /// Update the proof requirements. Admin only.
+    pub fn set_proof_requirements(
+        env: Env,
+        admin: Address,
+        requirements: ProofRequirements,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ProofRequirements, &requirements);
+        Ok(())
+    }
+
+    /// Record a compliance attestation for a completed delivery.
+    ///
+    /// This function implements an **oracle attestation pattern**: the backend
+    /// evaluates the delivery's telemetry (temperature readings, photo proof,
+    /// recipient signature, temperature log) against the configured
+    /// `TemperatureThresholds` and `ProofRequirements` off-chain, produces a
+    /// `compliance_hash` committing to that evaluation, and then calls this
+    /// function to record the result on-chain. Only the stored admin may attest.
     pub fn record_compliance_attestation(
         env: Env,
         admin: Address,
@@ -155,6 +204,14 @@ impl DeliveryContract {
         is_compliant: bool,
     ) -> Result<(), Error> {
         admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored {
+            return Err(Error::Unauthorized);
+        }
         if !Self::is_initialized(env.clone()) {
             return Err(Error::NotInitialized);
         }
