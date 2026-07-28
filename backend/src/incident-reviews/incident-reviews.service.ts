@@ -494,11 +494,14 @@ export class IncidentReviewsService {
     actionId: string,
     dto: CompleteCorrectiveActionDto,
     completedBy: string,
+    actor: TenantActorContext,
   ): Promise<CorrectiveActionEntity> {
     const action = await this.actionRepo.findOne({ where: { id: actionId } });
     if (!action) {
       throw new NotFoundException(`Corrective action ${actionId} not found`);
     }
+
+    await this.findOne(action.reviewId, actor);
 
     if (action.status === CorrectiveActionStatus.COMPLETED || action.status === CorrectiveActionStatus.VERIFIED) {
       throw new BadRequestException('Action already completed');
@@ -523,11 +526,14 @@ export class IncidentReviewsService {
     actionId: string,
     dto: VerifyCorrectiveActionDto,
     verifiedBy: string,
+    actor: TenantActorContext,
   ): Promise<CorrectiveActionEntity> {
     const action = await this.actionRepo.findOne({ where: { id: actionId } });
     if (!action) {
       throw new NotFoundException(`Corrective action ${actionId} not found`);
     }
+
+    await this.findOne(action.reviewId, actor);
 
     if (action.status !== CorrectiveActionStatus.COMPLETED) {
       throw new BadRequestException('Action must be completed before verification');
@@ -801,7 +807,11 @@ export class IncidentReviewsService {
   /**
    * Get corrective actions for a review
    */
-  async getCorrectiveActions(reviewId: string): Promise<CorrectiveActionEntity[]> {
+  async getCorrectiveActions(
+    reviewId: string,
+    actor: TenantActorContext,
+  ): Promise<CorrectiveActionEntity[]> {
+    await this.findOne(reviewId, actor);
     return this.actionRepo.find({
       where: { reviewId },
       order: { createdAt: 'ASC' },
@@ -811,7 +821,11 @@ export class IncidentReviewsService {
   /**
    * Get evidence links for a review
    */
-  async getEvidenceLinks(reviewId: string): Promise<IncidentEvidenceLinkEntity[]> {
+  async getEvidenceLinks(
+    reviewId: string,
+    actor: TenantActorContext,
+  ): Promise<IncidentEvidenceLinkEntity[]> {
+    await this.findOne(reviewId, actor);
     return this.evidenceRepo.find({
       where: { reviewId },
       order: { createdAt: 'ASC' },

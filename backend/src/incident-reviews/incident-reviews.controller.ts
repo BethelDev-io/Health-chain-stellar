@@ -123,16 +123,24 @@ export class IncidentReviewsController {
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/corrective-actions')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
-  getCorrectiveActions(@Param('id') id: string) {
-    return this.service.getCorrectiveActions(id);
+  getCorrectiveActions(@Param('id') id: string, @Request() req: any) {
+    return this.service.getCorrectiveActions(id, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @ApiOperation({ summary: 'Get :id evidence links' })
   @ApiResponse({ status: 200, description: 'Resource retrieved successfully' })
   @Get(':id/evidence-links')
   @RequirePermissions(Permission.VIEW_INCIDENT_REVIEWS)
-  getEvidenceLinks(@Param('id') id: string) {
-    return this.service.getEvidenceLinks(id);
+  getEvidenceLinks(@Param('id') id: string, @Request() req: any) {
+    return this.service.getEvidenceLinks(id, {
+      userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+      role: req.user?.role,
+      organizationId: req.user?.organizationId ?? null,
+    });
   }
 
   @ApiOperation({ summary: 'Post :id corrective actions' })
@@ -164,6 +172,11 @@ export class IncidentReviewsController {
       actionId,
       dto,
       req.user?.id ?? req.user?.sub ?? 'unknown',
+      {
+        userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
@@ -180,6 +193,11 @@ export class IncidentReviewsController {
       actionId,
       dto,
       req.user?.id ?? req.user?.sub ?? 'unknown',
+      {
+        userId: req.user?.id ?? req.user?.sub ?? 'unknown',
+        role: req.user?.role,
+        organizationId: req.user?.organizationId ?? null,
+      },
     );
   }
 
