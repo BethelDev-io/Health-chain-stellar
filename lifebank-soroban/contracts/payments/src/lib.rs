@@ -145,6 +145,8 @@ pub enum Error {
     /// Escrow payments must be settled via release_escrow/refund_escrow.
     /// update_status cannot move funds and would corrupt accounting invariants.
     EscrowSettlementRequired = 520,
+    /// Payment is not in a disputable state (must be Pending or Locked).
+    InvalidStatus = 521,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -1100,6 +1102,13 @@ impl PaymentContract {
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         if caller != payment.payer && caller != payment.payee {
             return Err(Error::Unauthorized);
+        }
+        // Only Pending or Locked payments may be disputed.  Raising a dispute
+        // on an already-Released or Refunded payment has no token backing and
+        // would silently corrupt aggregate statistics.
+        match payment.status {
+            PaymentStatus::Pending | PaymentStatus::Locked => {}
+            _ => return Err(Error::InvalidStatus),
         }
         let old_status = payment.status;
         payment.status = PaymentStatus::Disputed;
