@@ -888,6 +888,9 @@ impl PaymentContract {
         // Mark coordinator confirmation
         let coord_key = (payment_id, "coord_ok");
         env.storage().persistent().set(&coord_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&coord_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 
         // Check if hospital has also confirmed
         let hosp_key = (payment_id, "hosp_ok");
@@ -950,6 +953,9 @@ impl PaymentContract {
         // Mark hospital confirmation
         let hosp_key = (payment_id, "hosp_ok");
         env.storage().persistent().set(&hosp_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&hosp_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
 
         // Check if coordinator has also confirmed
         let coord_key = (payment_id, "coord_ok");
