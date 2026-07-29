@@ -684,6 +684,14 @@ impl CoordinatorContract {
             return Err(CoordinatorError::CannotRollbackSettled);
         }
 
+        // Once delivery has been confirmed, units are physically at the hospital.
+        // Releasing them back to Available here would let the same physical unit
+        // be re-allocated elsewhere while a copy is already delivered, and would
+        // improperly refund a payment for blood that was in fact delivered.
+        if wf.status == WorkflowStatus::Delivered {
+            return Err(CoordinatorError::InvalidWorkflowState);
+        }
+
         let inv_addr: Address = env
             .storage()
             .instance()

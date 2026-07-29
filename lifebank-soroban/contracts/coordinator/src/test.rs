@@ -954,7 +954,7 @@ fn test_emergency_halt_blocks_settle_operations() {
     assert!(h.coord.is_emergency_halted());
 
     let result = h.coord.try_settle_payment(&1u64, &h.admin);
-    assert_eq!(result, Err(Ok(CoordinatorError::EmergencyHalt)));
+    assert_eq!(result, Err(Ok(CoordinatorError::EmergencyHalted)));
 }
 
 /// Only admin can trigger emergency halt.
@@ -1015,9 +1015,11 @@ fn test_clear_emergency_halt_non_admin_fails() {
     assert!(h.coord.is_emergency_halted());
 }
 
-/// Rollback transitions Delivered-but-unsettled workflow correctly.
+/// Rollback must reject an already-Delivered workflow: units have already
+/// been physically handed to a hospital, so releasing them back to Available
+/// (and refunding payment) would enable double-use of the same blood unit.
 #[test]
-fn test_rollback_delivered_workflow() {
+fn test_rollback_blocked_after_delivery() {
     let h = setup();
     seed_pending_request(&h, 1);
     let unit_id = register_unit(&h);
@@ -1039,8 +1041,16 @@ fn test_rollback_delivered_workflow() {
 
     assert_eq!(h.coord.get_workflow(&1u64).status, WorkflowStatus::Delivered);
 
-    h.coord.rollback(&1u64);
+    let result = h.coord.try_rollback(&1u64);
+    assert_eq!(result, Err(Ok(CoordinatorError::InvalidWorkflowState)));
 
+    // Workflow, unit, and payment state must remain unchanged.
     let wf = h.coord.get_workflow(&1u64);
-    assert_eq!(wf.status, WorkflowStatus::Locked);
+    assert_eq!(wf.status, WorkflowStatus::Delivered);
+
+    let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
+    assert_ne!(unit.status, BloodStatus::Available);
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Locked);
 }

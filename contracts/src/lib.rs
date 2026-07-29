@@ -2640,6 +2640,12 @@ impl HealthChainContract {
             return Err(Error::InvalidFeePayload);
         }
 
+        // `amount` is the gross amount supplied by the payer; `payment.amount`
+        // is documented as the net amount after fees, so net it down here.
+        let net_amount = fee_payload
+            .calculate_net_amount(amount)
+            .map_err(|_| Error::InvalidFeePayload)?;
+
         let mut payments: Map<u64, Payment> = env
             .storage()
             .persistent()
@@ -2657,7 +2663,7 @@ impl HealthChainContract {
             request_id,
             payer,
             payee,
-            amount,
+            amount: net_amount,
             asset,
             fee_structure: fee_payload,
             status: PaymentStatus::Pending,
