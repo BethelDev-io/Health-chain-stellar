@@ -21,9 +21,12 @@ export enum MediaProcessingState {
   REJECTED = 'rejected',
 }
 
+export const MEDIA_OWNER_TYPES = ['user', 'organization', 'blood_bank'] as const;
+export type MediaOwnerType = (typeof MEDIA_OWNER_TYPES)[number];
+
 export interface MediaUploadContext {
   ownerId: string;
-  ownerType: string;
+  ownerType: MediaOwnerType;
   category: 'profile' | 'evidence' | 'medical' | 'signature';
 }
 
@@ -363,7 +366,22 @@ export class MediaProcessingService {
   ): string {
     const ext = path.extname(originalname).toLowerCase() || '.bin';
     const base = this.configService.get<string>('MEDIA_STORAGE_PATH', '/tmp/media');
-    return path.join(base, context.ownerType, context.ownerId, `${fileId}${ext}`);
+    const resolvedBase = path.resolve(base);
+    const resolvedPath = path.resolve(
+      resolvedBase,
+      context.ownerType,
+      context.ownerId,
+      `${fileId}${ext}`,
+    );
+
+    if (
+      resolvedPath !== resolvedBase &&
+      !resolvedPath.startsWith(resolvedBase + path.sep)
+    ) {
+      throw new BadRequestException('Resolved storage path escapes storage root');
+    }
+
+    return resolvedPath;
   }
 
   private ensureDir(dir: string): void {

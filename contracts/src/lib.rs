@@ -3031,6 +3031,10 @@ impl HealthChainContract {
             return Err(Error::InvalidDisputeStatus);
         }
 
+        if resolution == DisputeStatus::Open {
+            return Err(Error::InvalidDisputeStatus);
+        }
+
         let mut payments: Map<u64, Payment> = env
             .storage()
             .persistent()
