@@ -29,6 +29,7 @@ import { PermissionsService } from './permissions.service';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
 import { ScopeResolutionService } from './scope-resolution.service';
 import { SessionRiskService } from './session-risk.service';
+import { WsAuthService } from './ws-auth.service';
 
 import type { JwtModuleOptions } from '@nestjs/jwt';
 
@@ -83,6 +84,7 @@ import type { JwtModuleOptions } from '@nestjs/jwt';
     AuthSessionRepository,
     ScopeResolutionService,
     SessionRiskService,
+    WsAuthService,
   ],
   exports: [
     AuthService,
@@ -97,6 +99,7 @@ import type { JwtModuleOptions } from '@nestjs/jwt';
     JwtModule,
     AuthSessionRepository,
     SessionRiskService,
+    WsAuthService,
   ],
 })
 export class AuthModule {}
