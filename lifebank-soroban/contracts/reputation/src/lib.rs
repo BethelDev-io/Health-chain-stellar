@@ -290,6 +290,20 @@ impl ReputationContract {
         Ok(())
     }
 
+    /// Verify that `caller` is the configured admin and has authorized this call.
+    fn require_admin_auth(env: &Env, caller: &Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotAuthorized)?;
+        caller.require_auth();
+        if caller != &admin {
+            return Err(Error::NotAuthorized);
+        }
+        Ok(())
+    }
+
     /// Reject caller-supplied timestamps that lie in the future relative to
     /// the current ledger time. Rating/assignment/fraud timestamps feed
     /// directly into recency weighting (`weighted_rating_score`) and
