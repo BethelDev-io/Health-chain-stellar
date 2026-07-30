@@ -376,7 +376,7 @@ fn property_fee_and_multisig_arithmetic_fail_safely_for_arbitrary_edges() {
     let fee_cases = [
         (0, 0, 0, 0, 1_000, Ok(1_000)),
         (500, 400, 100, 1, 1_000, Err(PaymentError::FeesExceedAmount)),
-        (-1, 0, 0, 0, 1_000, Ok(1_001)),
+        (-1, 0, 0, 0, 1_000, Err(PaymentError::InvalidFee)),
     ];
 
     for (service_fee, network_fee, performance_bonus, fixed_fee, gross, expected_net) in fee_cases {
@@ -388,11 +388,18 @@ fn property_fee_and_multisig_arithmetic_fail_safely_for_arbitrary_edges() {
             fixed_fee,
         };
 
-        if service_fee < 0 || network_fee < 0 || performance_bonus < 0 || fixed_fee < 0 {
-            assert_eq!(fees.validate(), Err(PaymentError::InvalidFee));
+        let expected_validation = if service_fee < 0
+            || network_fee < 0
+            || performance_bonus < 0
+            || fixed_fee < 0
+        {
+            Err(PaymentError::InvalidFee)
         } else {
-            assert_eq!(fees.calculate_net_amount(gross), expected_net);
-        }
+            Ok(())
+        };
+
+        assert_eq!(fees.validate(), expected_validation);
+        assert_eq!(fees.calculate_net_amount(gross), expected_net);
     }
 
     let signer = Address::generate(&env);

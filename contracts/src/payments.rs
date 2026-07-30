@@ -370,6 +370,7 @@ impl FeeStructure {
 
     /// Calculates net amount after deducting fees
     pub fn calculate_net_amount(&self, gross_amount: i128) -> Result<i128, PaymentError> {
+        self.validate()?;
         let total_fees = self.total()?;
         if total_fees > gross_amount {
             return Err(PaymentError::FeesExceedAmount);
