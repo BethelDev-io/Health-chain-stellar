@@ -1,0 +1,13 @@
+export enum RequestStatus {
+  PENDING = 'PENDING',
+  MATCHED = 'MATCHED',
+  APPROVED = 'APPROVED',
+  IN_TRANSIT = 'IN_TRANSIT',
+  PARTIALLY_FULFILLED = 'PARTIALLY_FULFILLED',
+  FULFILLED = 'FULFILLED',
+  CANCELLED = 'CANCELLED',
+  REJECTED = 'REJECTED',
+  EXPIRED = 'EXPIRED',
+}
+
+export const BloodRequestStatus = RequestStatus;
