@@ -67,6 +67,8 @@ import { SurgeSimulationModule } from './surge-simulation/surge-simulation.modul
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { UsersModule } from './users/users.module';
+import { UssdModule } from './ussd-session/ussd.module';
+import { MediaProcessingModule } from './media-processing/media-processing.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
 import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
@@ -187,6 +189,8 @@ import { throttleGetTracker } from './throttler/throttle-tracker.util';
     SurgeSimulationModule,
     TrackingModule,
     TransparencyModule,
+    UssdModule,
+    MediaProcessingModule,
   ],
   controllers: [AppController],
   providers: [
