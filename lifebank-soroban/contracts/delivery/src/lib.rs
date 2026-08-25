@@ -22,6 +22,10 @@ const DEFAULT_MIN_TEMPERATURE_C: i32 = 2;
 const DEFAULT_MAX_TEMPERATURE_C: i32 = 6;
 const CONTRACT_VERSION: u32 = 1;
 
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -30,6 +34,8 @@ pub enum Error {
     NotInitialized = 701,
     DeliveryNotFound = 702,
     Unauthorized = 703,
+    InvalidInput = 704,
+    AlreadyAttested = 705,
 }
 
 #[contracttype]
@@ -93,6 +99,9 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::ProofRequirements, &proof_requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         DeliveryInitialized {
             admin,
@@ -161,9 +170,15 @@ impl DeliveryContract {
         if admin != stored {
             return Err(Error::Unauthorized);
         }
+        if thresholds.min_celsius > thresholds.max_celsius {
+            return Err(Error::InvalidInput);
+        }
         env.storage()
             .instance()
             .set(&DataKey::TemperatureThresholds, &thresholds);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -185,6 +200,9 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::ProofRequirements, &requirements);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -216,10 +234,20 @@ impl DeliveryContract {
             return Err(Error::NotInitialized);
         }
 
-        env.storage().persistent().set(
-            &DataKey::ComplianceAttestation(delivery_id),
-            &(compliance_hash.clone(), is_compliant),
-        );
+        let attestation_key = DataKey::ComplianceAttestation(delivery_id);
+        if env.storage().persistent().has(&attestation_key) {
+            return Err(Error::AlreadyAttested);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&attestation_key, &(compliance_hash.clone(), is_compliant));
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         ComplianceAttested {
             delivery_id,

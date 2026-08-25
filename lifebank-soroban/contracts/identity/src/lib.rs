@@ -364,14 +364,7 @@ impl IdentityContract {
     /// Pause all state-mutating functions. Admin only.
     pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &true);
         Ok(())
     }
@@ -379,14 +372,7 @@ impl IdentityContract {
     /// Unpause the contract. Admin only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
         admin.require_auth();
-        let stored: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
     }
@@ -879,16 +865,7 @@ impl IdentityContract {
     ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_not_paused(&env)?;
-
-        // Verify caller is admin
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         // Org must exist
         if !env
@@ -940,15 +917,7 @@ impl IdentityContract {
     ) -> Result<(), Error> {
         admin.require_auth();
         Self::require_not_paused(&env)?;
-
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         let badges_key = DataKey::OrgBadges(org_id.clone());
         let badges: Vec<BadgeRecord> = env
