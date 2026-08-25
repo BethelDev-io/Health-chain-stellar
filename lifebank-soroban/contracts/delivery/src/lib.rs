@@ -5,6 +5,18 @@ use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
 };
 
+mod request_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request_counter(env: Env) -> u64;
+    }
+}
+
+use request_client::RequestContractClient;
+
 #[contractevent(topics = ["delivery", "init"], data_format = "vec")]
 pub struct DeliveryInitialized {
     pub admin: Address,
@@ -214,6 +226,27 @@ impl DeliveryContract {
         }
         if !Self::is_initialized(env.clone()) {
             return Err(Error::NotInitialized);
+        }
+
+        if delivery_id == 0 {
+            return Err(Error::DeliveryNotFound);
+        }
+
+        let request_contract = Self::get_request_contract(env.clone())?;
+        let request_counter = RequestContractClient::new(&env, &request_contract)
+            .try_get_request_counter()
+            .map_err(|_| Error::DeliveryNotFound)?
+            .map_err(|_| Error::DeliveryNotFound)?;
+
+        if delivery_id > request_counter {
+            return Err(Error::DeliveryNotFound);
+        }
+
+        let stored_counter = Self::get_delivery_counter(env.clone())?;
+        if request_counter > stored_counter {
+            env.storage()
+                .instance()
+                .set(&DataKey::DeliveryCounter, &request_counter);
         }
 
         env.storage().persistent().set(
