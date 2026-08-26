@@ -487,7 +487,7 @@ impl CoordinatorContract {
         Self::require_admin(&env, &caller)?;
 
         if let Some(wf) = load_workflow(&env, request_id) {
-            if wf.status != WorkflowStatus::Pending {
+            if !is_terminal(wf.status) {
                 return Err(CoordinatorError::WorkflowAlreadyStarted);
             }
         }
@@ -748,6 +748,7 @@ impl CoordinatorContract {
     ///   (already delivered, settled, or rolled back)
     pub fn expire_workflow(env: Env, request_id: u64) -> Result<(), CoordinatorError> {
         Self::require_initialized(&env)?;
+        Self::require_not_paused(&env)?;
 
         let wf = load_workflow(&env, request_id).ok_or(CoordinatorError::WorkflowNotFound)?;
 
