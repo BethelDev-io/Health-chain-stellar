@@ -600,6 +600,4 @@ impl RequestContract {
 }
 
 #[cfg(test)]
-mod test;
-#[cfg(test)]
 mod test_security_fixes;
