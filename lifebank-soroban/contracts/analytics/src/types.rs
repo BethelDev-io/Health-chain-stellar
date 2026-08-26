@@ -57,8 +57,11 @@ pub struct AnalyticsConfig {
 pub enum DataKey {
     /// AnalyticsConfig — instance storage.
     Config,
-    /// MetricsSnapshot keyed by period_index — persistent storage.
-    Snapshot(u64),
+    /// MetricsSnapshot keyed by (period_type, period_index) — persistent
+    /// storage. period_type is included so that switching the reporting
+    /// period granularity can never collide two different-sized buckets
+    /// that happen to share the same numeric period_index.
+    Snapshot(PeriodType, u64),
     /// Global lifetime counters — instance storage.
     TotalDonations,
     TotalRequests,

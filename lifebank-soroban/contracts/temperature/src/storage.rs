@@ -44,3 +44,18 @@ pub fn set_temp_page_len(env: &Env, unit_id: u64, page: u32, len: u32) {
         .persistent()
         .set(&DataKey::TempPageLen(unit_id, page), &len);
 }
+
+/// Returns the last active (potentially non-full) page number for a unit,
+/// or 0 if the unit has no readings yet.
+pub fn get_current_page(env: &Env, unit_id: u64) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CurrentPage(unit_id))
+        .unwrap_or(0)
+}
+
+pub fn set_current_page(env: &Env, unit_id: u64, page: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CurrentPage(unit_id), &page);
+}

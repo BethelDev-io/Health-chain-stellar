@@ -18,4 +18,6 @@ pub enum ContractError {
     CoordinatorCallFailed = 609,
     /// Caller is not a whitelisted oracle
     OracleNotWhitelisted = 610,
+    /// Reading is outside the physically-plausible temperature range
+    TemperatureOutOfRange = 611,
 }

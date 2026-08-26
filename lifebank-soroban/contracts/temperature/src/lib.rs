@@ -49,7 +49,21 @@ pub struct CompromisedReset {
     pub unit_id: u64,
 }
 
+#[contractevent(topics = ["tmp_viol"], data_format = "vec")]
+pub struct ViolationDetected {
+    pub unit_id: u64,
+    pub temperature_celsius_x100: i32,
+    pub min_celsius_x100: i32,
+    pub max_celsius_x100: i32,
+    pub timestamp: u64,
+}
+
 const PAGE_SIZE: u32 = 20;
+/// Physically-plausible temperature bounds (x100 Celsius). Absolute zero is
+/// -273.15°C; the upper bound is a generous margin above any realistic
+/// blood-storage or ambient sensor reading.
+const MIN_PLAUSIBLE_TEMP_CELSIUS_X100: i32 = -27315;
+const MAX_PLAUSIBLE_TEMP_CELSIUS_X100: i32 = 8500;
 const CONTRACT_VERSION: u32 = 1;
 const GOVERNANCE_DELAY_SECONDS: u64 = 7 * 24 * 3600;
 /// TTL constants for persistent oracle approval entries (in ledgers; ~5 s each).
@@ -294,6 +308,12 @@ impl TemperatureContract {
             return Err(ContractError::OracleNotWhitelisted);
         }
 
+        if !(MIN_PLAUSIBLE_TEMP_CELSIUS_X100..=MAX_PLAUSIBLE_TEMP_CELSIUS_X100)
+            .contains(&temperature_celsius_x100)
+        {
+            return Err(ContractError::TemperatureOutOfRange);
+        }
+
         // Bump the oracle entry TTL on every successful read so active oracles
         // never expire while they are still submitting readings.
         if is_approved {
@@ -315,6 +335,17 @@ impl TemperatureContract {
             timestamp,
             is_violation,
         };
+
+        if is_violation {
+            ViolationDetected {
+                unit_id,
+                temperature_celsius_x100,
+                min_celsius_x100: threshold.min_celsius_x100,
+                max_celsius_x100: threshold.max_celsius_x100,
+                timestamp,
+            }
+            .publish(&env);
+        }
 
         // Update consecutive violation streak
         let streak_key = DataKey::ConsecutiveViolationStreak(unit_id);
@@ -340,21 +371,15 @@ impl TemperatureContract {
                 .extend_ttl(&compromised_key, ORACLE_BUMP_THRESHOLD, ORACLE_BUMP_TO);
         }
 
-        let mut page_num: u32 = 0;
-        let position: u32;
-
-        loop {
-            let len = storage::get_temp_page_len(&env, unit_id, page_num);
-            if len == 0 && page_num > 0 {
-                position = 0;
-                break;
-            }
-            if len < PAGE_SIZE {
-                position = len;
-                break;
-            }
-            page_num = page_num.saturating_add(1); // Prevent overflow
+        // Use the cached "current page" cursor so insertion is O(1) instead
+        // of rescanning every page from 0 on each call.
+        let mut page_num = storage::get_current_page(&env, unit_id);
+        let mut len = storage::get_temp_page_len(&env, unit_id, page_num);
+        if len >= PAGE_SIZE {
+            page_num = page_num.saturating_add(1);
+            len = 0;
         }
+        let position = len;
 
         let mut page = storage::get_temp_page(&env, unit_id, page_num);
 
@@ -370,6 +395,7 @@ impl TemperatureContract {
 
         storage::set_temp_page(&env, unit_id, page_num, &page);
         storage::set_temp_page_len(&env, unit_id, page_num, position.saturating_add(1)); // Prevent overflow
+        storage::set_current_page(&env, unit_id, page_num);
 
         Ok(())
     }
@@ -784,7 +810,8 @@ impl TemperatureContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Events as _};
+    use soroban_sdk::{Symbol, TryFromVal};
 
     fn create_test_contract<'a>() -> (Env, Address, Address, TemperatureContractClient<'a>) {
         let env = Env::default();
@@ -973,6 +1000,125 @@ mod tests {
     }
 
     #[test]
+    fn test_log_reading_insertion_cost_does_not_scale_with_page_count() {
+        let (env, admin, oracle, client) = create_test_contract();
+
+        // Unit with many pre-existing pages of readings.
+        let unit_id_many_pages = 505u64;
+        client.set_threshold(&admin, &unit_id_many_pages, &200, &600);
+        for _ in 0..100u32 {
+            client.log_reading(&oracle, &unit_id_many_pages, &400);
+        }
+        client.log_reading(&oracle, &unit_id_many_pages, &400);
+        let entries_many_pages = env.cost_estimate().resources().memory_read_entries;
+
+        // Freshly-created unit with no pre-existing readings.
+        let unit_id_fresh = 506u64;
+        client.set_threshold(&admin, &unit_id_fresh, &200, &600);
+        client.log_reading(&oracle, &unit_id_fresh, &400);
+        let entries_fresh = env.cost_estimate().resources().memory_read_entries;
+
+        assert!(
+            entries_many_pages <= entries_fresh + 3,
+            "log_reading storage reads should not scale with existing page count \
+             (many-pages: {}, fresh: {})",
+            entries_many_pages,
+            entries_fresh
+        );
+    }
+
+    #[test]
+    fn test_log_reading_publishes_violation_event() {
+        let (env, admin, oracle, client) = create_test_contract();
+
+        let unit_id = 503u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        client.log_reading(&oracle, &unit_id, &100); // violation (too cold)
+
+        let events = env.events().all();
+        let found = events.iter().any(|(_, topics, _)| {
+            topics.iter().any(|t| {
+                Symbol::try_from_val(&env, &t) == Ok(Symbol::new(&env, "tmp_viol"))
+            })
+        });
+        assert!(found, "Expected a violation event to be published");
+    }
+
+    #[test]
+    fn test_log_reading_no_event_for_non_violation() {
+        let (env, admin, oracle, client) = create_test_contract();
+
+        let unit_id = 504u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        client.log_reading(&oracle, &unit_id, &400); // within range
+
+        let events = env.events().all();
+        let found = events.iter().any(|(_, topics, _)| {
+            topics.iter().any(|t| {
+                Symbol::try_from_val(&env, &t) == Ok(Symbol::new(&env, "tmp_viol"))
+            })
+        });
+        assert!(
+            !found,
+            "No violation event should be published for a non-violation reading"
+        );
+    }
+
+    #[test]
+    fn test_log_reading_rejects_below_absolute_zero() {
+        let (_env, admin, oracle, client) = create_test_contract();
+
+        let unit_id = 500u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        let result = client.try_log_reading(&oracle, &unit_id, &-27316);
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::TemperatureOutOfRange)),
+            "Reading below absolute zero should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_log_reading_rejects_implausible_outliers() {
+        let (_env, admin, oracle, client) = create_test_contract();
+
+        let unit_id = 501u64;
+        client.set_threshold(&admin, &unit_id, &200, &600);
+
+        let result = client.try_log_reading(&oracle, &unit_id, &i32::MAX);
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::TemperatureOutOfRange)),
+            "Absurd outlier reading should be rejected"
+        );
+
+        let result = client.try_log_reading(&oracle, &unit_id, &i32::MIN);
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::TemperatureOutOfRange)),
+            "Absurd outlier reading should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_log_reading_accepts_physically_plausible_bounds() {
+        let (_env, admin, oracle, client) = create_test_contract();
+
+        let unit_id = 502u64;
+        client.set_threshold(&admin, &unit_id, &-27315, &8500);
+
+        // Boundary values should be accepted.
+        client.log_reading(&oracle, &unit_id, &-27315);
+        client.log_reading(&oracle, &unit_id, &8500);
+
+        let readings = client.get_readings(&unit_id, &0u32, &100u32);
+        assert_eq!(readings.len(), 2);
+    }
+
+    #[test]
     fn test_temperature_summary_basic() {
         let (_env, admin, oracle, client) = create_test_contract();
 
@@ -1020,11 +1166,12 @@ mod tests {
         let (_env, admin, oracle, client) = create_test_contract();
 
         let unit_id = 102u64;
-        client.set_threshold(&admin, &unit_id, &0, &60_000_000);
+        client.set_threshold(&admin, &unit_id, &0, &8500);
 
-        // Keep this small enough for CI while still proving the accumulator
-        // must be wider than i32: 30,000,000 * 100 = 3,000,000,000.
-        let test_temp = 30_000_000i32;
+        // Physically-plausible bounds now cap individual readings, so this
+        // exercises the i64 accumulator with the maximum allowed magnitude
+        // repeated across many readings rather than a single implausible value.
+        let test_temp = 8500i32;
         let num_readings = 100u64;
 
         for _i in 0..num_readings {
