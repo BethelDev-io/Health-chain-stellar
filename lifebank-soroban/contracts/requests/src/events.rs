@@ -23,6 +23,14 @@ pub struct RequestStatusUpdated {
     pub timestamp: u64,
 }
 
+#[contractevent(topics = ["reservation_id_set"], data_format = "vec")]
+pub struct ReservationIdSet {
+    pub request_id: u64,
+    pub actor: Address,
+    pub reservation_id: u64,
+    pub timestamp: u64,
+}
+
 pub fn emit_initialized(env: &Env, admin: &Address, inventory_contract: &Address) {
     RequestsInitialized {
         admin: admin.clone(),
@@ -65,6 +73,22 @@ pub fn emit_request_status_updated(
         actor: actor.clone(),
         old_status,
         new_status,
+        timestamp,
+    }
+    .publish(env);
+}
+
+pub fn emit_reservation_id_set(
+    env: &Env,
+    request_id: u64,
+    actor: &Address,
+    reservation_id: u64,
+    timestamp: u64,
+) {
+    ReservationIdSet {
+        request_id,
+        actor: actor.clone(),
+        reservation_id,
         timestamp,
     }
     .publish(env);

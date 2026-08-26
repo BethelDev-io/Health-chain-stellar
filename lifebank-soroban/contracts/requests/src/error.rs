@@ -21,6 +21,8 @@ pub enum ContractError {
     NotRequestOwner = 312,
     /// Transition requires a non-empty human-readable reason.
     InvalidReason = 313,
+    /// Request already has a reservation ID; overwrite would orphan the prior reservation.
+    ReservationAlreadySet = 314,
 }
 
 #[cfg(test)]
@@ -46,6 +48,7 @@ mod tests {
             ContractError::InvalidRequestStatus,
             ContractError::NotRequestOwner,
             ContractError::InvalidReason,
+            ContractError::ReservationAlreadySet,
         ];
 
         for i in 0..all.len() {

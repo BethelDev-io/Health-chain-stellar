@@ -476,8 +476,10 @@ impl RequestContract {
         Ok(())
     }
 
-    /// Set or update the inventory reservation ID for a request. Admin only.
+    /// Set the inventory reservation ID for a request. Admin only.
     /// Called when units are reserved against a request so cancellation can release them.
+    /// Rejects overwrite of an existing reservation (which would orphan inventory units)
+    /// and only accepts requests in Approved or InProgress status.
     pub fn set_reservation_id(
         env: Env,
         caller: Address,
@@ -494,8 +496,38 @@ impl RequestContract {
 
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match request.status {
+            RequestStatus::Approved | RequestStatus::InProgress => {}
+            _ => return Err(ContractError::InvalidRequestStatus),
+        }
+
+        if request.reservation_id.is_some() {
+            return Err(ContractError::ReservationAlreadySet);
+        }
+
         request.reservation_id = Some(reservation_id);
+        let status = request.status;
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            status,
+            false,
+            status,
+            String::from_str(&env, "Reservation ID set"),
+            0,
+            false,
+        );
         storage::set_request(&env, &request);
+
+        events::emit_reservation_id_set(
+            &env,
+            request_id,
+            &caller,
+            reservation_id,
+            env.ledger().timestamp(),
+        );
 
         Ok(())
     }

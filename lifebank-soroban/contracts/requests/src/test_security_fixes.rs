@@ -1,6 +1,6 @@
 use crate::{BloodComponent, BloodType, ContractError, RequestContract, RequestStatus, Urgency};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String,
 };
 
@@ -189,4 +189,100 @@ fn test_update_request_status_by_admin_succeeds() {
     );
 
     assert!(result.is_ok());
+}
+
+fn setup_authorized_hospital() -> (Env, Address, Address) {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let hospital = Address::generate(&env);
+    env.mock_all_auths();
+    RequestContract::initialize(env.clone(), admin.clone(), Address::generate(&env)).unwrap();
+    RequestContract::authorize_hospital(env.clone(), hospital.clone()).unwrap();
+    env.ledger().set_timestamp(1_000);
+    (env, admin, hospital)
+}
+
+fn create_urgent_request(env: &Env, hospital: &Address) -> u64 {
+    RequestContract::create_request(
+        env.clone(),
+        hospital.clone(),
+        BloodType::OPositive,
+        BloodComponent::WholeBlood,
+        500,
+        Urgency::Urgent,
+        1_600,
+    )
+    .unwrap()
+}
+
+/// #1302: A second set_reservation_id call must not overwrite the first ID.
+#[test]
+fn test_set_reservation_id_rejects_overwrite() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    RequestContract::update_request_status(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        RequestStatus::Approved,
+        String::from_str(&env, "Approved"),
+    )
+    .unwrap();
+
+    RequestContract::set_reservation_id(env.clone(), admin.clone(), request_id, 11).unwrap();
+
+    let result = RequestContract::set_reservation_id(env.clone(), admin.clone(), request_id, 22);
+
+    assert_eq!(result, Err(ContractError::ReservationAlreadySet));
+
+    let request = RequestContract::get_request(env.clone(), request_id).unwrap();
+    assert_eq!(request.reservation_id, Some(11));
+}
+
+/// #1302: A legitimate first set_reservation_id call records history and emits an event.
+#[test]
+fn test_set_reservation_id_records_history_and_event() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    RequestContract::update_request_status(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        RequestStatus::Approved,
+        String::from_str(&env, "Approved"),
+    )
+    .unwrap();
+
+    let events_before = env.events().all().len();
+
+    RequestContract::set_reservation_id(env.clone(), admin.clone(), request_id, 42).unwrap();
+
+    assert_eq!(env.events().all().len(), events_before + 1);
+
+    let request = RequestContract::get_request(env.clone(), request_id).unwrap();
+    assert_eq!(request.reservation_id, Some(42));
+
+    let history = RequestContract::get_request_history(env.clone(), request_id).unwrap();
+    let last = history.get(history.len() - 1).unwrap();
+    assert_eq!(last.actor, admin);
+    assert_eq!(last.previous_status, RequestStatus::Approved);
+    assert_eq!(last.new_status, RequestStatus::Approved);
+    assert_eq!(last.reason, String::from_str(&env, "Reservation ID set"));
+    assert_eq!(last.timestamp, 1_000);
+}
+
+/// #1302: set_reservation_id is restricted to Approved and InProgress requests.
+#[test]
+fn test_set_reservation_id_rejects_wrong_status() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    let result = RequestContract::set_reservation_id(env.clone(), admin.clone(), request_id, 42);
+
+    assert_eq!(result, Err(ContractError::InvalidRequestStatus));
+
+    let request = RequestContract::get_request(env.clone(), request_id).unwrap();
+    assert_eq!(request.reservation_id, None);
 }
