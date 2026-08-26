@@ -716,7 +716,7 @@ impl InventoryContract {
         let current_time = env.ledger().timestamp();
 
         if duration_seconds > Self::MAX_RESERVATION_DURATION_SECS {
-            panic!("duration_seconds exceeds maximum");
+            return Err(ContractError::InvalidInput);
         }
 
         // ── Cross-contract synchronisation with BloodUnitRegistry ─────────────
@@ -807,7 +807,7 @@ impl InventoryContract {
         Ok(reservation_id)
     }
 
-    /// Internal helper: Release a reservation by trusting the current contract as intermediary.
+    /// Release a reservation by trusting the current contract as intermediary.
     ///
     /// This function is called by other contracts (e.g., requests) that have already validated
     /// the authorization from their own actors (hospital, admin). The requests contract passes
@@ -829,9 +829,9 @@ impl InventoryContract {
     /// - `Unauthorized` if caller is not the authorized_contract
     /// - `ReservationNotFound` if reservation does not exist
     /// - `Paused` if the contract is paused
-    fn release_reservation_by_contract(
-        env: &Env,
-        authorized_contract: &Address,
+    pub fn release_reservation_by_contract(
+        env: Env,
+        authorized_contract: Address,
         reservation_id: u64,
     ) -> Result<(), ContractError> {
         Self::require_not_paused(&env)?;
