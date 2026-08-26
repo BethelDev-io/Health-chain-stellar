@@ -38,6 +38,11 @@ use inventory_client::InventoryContractClient;
 
 const CONTRACT_VERSION: u32 = 1;
 
+/// Maximum number of entries accepted by `batch_create_requests`.
+/// Mirrors the sibling matching contract's `MAX_BATCH_SIZE` so callers hit a
+/// dedicated error instead of the instruction or storage-write limit.
+const MAX_BATCH_SIZE: u32 = 50;
+
 #[contract]
 pub struct RequestContract;
 
@@ -230,6 +235,7 @@ impl RequestContract {
     /// Each tuple is `(blood_type, component, quantity_ml, urgency, required_by_timestamp)`.
     /// Returns the Vec of new request IDs in input order.
     /// Validates all items first, then writes all atomically.
+    /// Rejects batches larger than `MAX_BATCH_SIZE` before either pass begins.
     pub fn batch_create_requests(
         env: Env,
         hospital: Address,
@@ -237,6 +243,10 @@ impl RequestContract {
     ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
         hospital.require_auth();
         storage::require_initialized(&env)?;
+
+        if entries.len() > MAX_BATCH_SIZE {
+            return Err(ContractError::BatchTooLarge);
+        }
 
         if !storage::is_hospital_authorized(&env, &hospital) {
             return Err(ContractError::NotAuthorizedHospital);

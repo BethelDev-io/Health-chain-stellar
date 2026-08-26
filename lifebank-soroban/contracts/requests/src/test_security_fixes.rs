@@ -1,6 +1,10 @@
 use crate::{BloodComponent, BloodType, ContractError, RequestContract, RequestStatus, Urgency};
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
+    Address, Env, String, Vec,
+};
+use soroban_sdk::{
+    testutils::{Address as _, Events as _, Ledger as _},
     Address, Env, String,
 };
 
@@ -285,4 +289,45 @@ fn test_set_reservation_id_rejects_wrong_status() {
 
     let request = RequestContract::get_request(env.clone(), request_id).unwrap();
     assert_eq!(request.reservation_id, None);
+}
+
+fn batch_entries(
+    env: &Env,
+    count: u32,
+) -> Vec<(BloodType, BloodComponent, u32, Urgency, u64)> {
+    let mut entries = Vec::new(env);
+    for _ in 0..count {
+        entries.push_back((
+            BloodType::OPositive,
+            BloodComponent::WholeBlood,
+            500u32,
+            Urgency::Urgent,
+            1_600u64,
+        ));
+    }
+    entries
+}
+
+/// #1303: A batch larger than MAX_BATCH_SIZE (50) is rejected before any writes.
+#[test]
+fn test_batch_create_requests_rejects_over_cap() {
+    let (env, _admin, hospital) = setup_authorized_hospital();
+    let entries = batch_entries(&env, 51);
+
+    let result = RequestContract::batch_create_requests(env.clone(), hospital, entries);
+
+    assert_eq!(result, Err(ContractError::BatchTooLarge));
+    assert_eq!(RequestContract::get_request_counter(env.clone()).unwrap(), 0);
+}
+
+/// #1303: A batch at the MAX_BATCH_SIZE boundary succeeds.
+#[test]
+fn test_batch_create_requests_at_cap_succeeds() {
+    let (env, _admin, hospital) = setup_authorized_hospital();
+    let entries = batch_entries(&env, 50);
+
+    let ids = RequestContract::batch_create_requests(env.clone(), hospital, entries).unwrap();
+
+    assert_eq!(ids.len(), 50);
+    assert_eq!(RequestContract::get_request_counter(env.clone()).unwrap(), 50);
 }
