@@ -82,6 +82,7 @@ mod request_client {
         pub assigned_units: Vec<u64>,
         pub fulfilled_quantity_ml: u32,
         pub reservation_id: Option<u64>,
+        pub fulfilled_by: Option<Address>,
         pub history: Vec<RequestHistoryEntry>,
     }
 
@@ -119,6 +120,7 @@ pub enum Error {
     AlreadyVerified = 211,
     AlreadyUnverified = 212,
     ContractPaused = 213,
+    DeliveryAlreadyVerified = 214,
 }
 
 // ---------------------------------------------------------------------------
@@ -836,10 +838,14 @@ impl IdentityContract {
     fn verify_interaction(
         env: Env,
         rater: Address,
-        _org_id: Address,
+        org_id: Address,
         request_id: u64,
     ) -> Result<(), Error> {
-        if !env.storage().persistent().has(&DataKey::Org(_org_id)) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Org(org_id.clone()))
+        {
             return Err(Error::OrganizationNotFound);
         }
 
@@ -860,6 +866,11 @@ impl IdentityContract {
         }
 
         if request.status != request_client::RequestStatus::Fulfilled {
+            return Err(Error::Unauthorized);
+        }
+
+        // The rated org must be the one that actually fulfilled this request.
+        if request.fulfilled_by != Some(org_id) {
             return Err(Error::Unauthorized);
         }
 
@@ -1020,6 +1031,23 @@ impl IdentityContract {
             return Err(Error::OrganizationNotFound);
         }
 
+        // Verifier must be an authorized courier (Rider), the recipient who
+        // received the delivery, or the org that dispatched it. This prevents
+        // an arbitrary, unrelated address from fabricating a delivery proof.
+        let is_authorized = Self::has_role_internal(env.clone(), verifier.clone(), Role::Rider)
+            || verifier == recipient
+            || verifier == org_id;
+        if !is_authorized {
+            return Err(Error::Unauthorized);
+        }
+
+        // A delivery proof for this request must not already exist; overwriting
+        // a previously recorded proof requires an explicit correction path.
+        let delivery_key = DataKey::Delivery(request_id);
+        if env.storage().persistent().has(&delivery_key) {
+            return Err(Error::DeliveryAlreadyVerified);
+        }
+
         let now = env.ledger().timestamp();
 
         let proof = DeliveryProof {
@@ -1033,7 +1061,6 @@ impl IdentityContract {
             verified_at: Some(now),
         };
 
-        let delivery_key = DataKey::Delivery(request_id);
         env.storage().persistent().set(&delivery_key, &proof);
         env.storage()
             .persistent()
