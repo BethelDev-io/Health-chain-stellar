@@ -157,7 +157,12 @@ pub enum Error {
     /// update_status cannot move funds and would corrupt accounting invariants.
     EscrowSettlementRequired = 520,
     /// Payment is not in a disputable state (must be Pending or Locked).
-    InvalidStatus = 521,
+    InvalidStatus = 522,
+    /// update_status cannot move a payment out of a terminal status
+    /// (Released/Refunded/Cancelled) back into a non-terminal one — doing so
+    /// would leave req_idx_key deleted while a live payment still exists,
+    /// letting a duplicate payment slip past the DuplicatePayment guard.
+    InvalidStatusTransition = 523,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -332,6 +337,15 @@ fn index_by_request(env: &Env, request_id: u64, payment_id: u64) {
 /// (Released, Refunded, Cancelled) to avoid retaining stale entries.
 fn remove_from_request_index(env: &Env, request_id: u64) {
     env.storage().persistent().remove(&req_idx_key(request_id));
+}
+
+/// A terminal status is one from which req_idx_key has already been removed;
+/// only Released, Refunded, and Cancelled are terminal.
+fn is_terminal_status(status: PaymentStatus) -> bool {
+    matches!(
+        status,
+        PaymentStatus::Released | PaymentStatus::Refunded | PaymentStatus::Cancelled
+    )
 }
 
 /// Persistent key for the ordered list of payment IDs associated with a request.
@@ -1064,7 +1078,7 @@ impl PaymentContract {
         Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
-        
+
         // Security fix: prevent escrow bypass via update_status
         // Released/Refunded require actual token transfer, which must go through
         // release_escrow/refund_escrow. update_status cannot move funds.
@@ -1073,8 +1087,19 @@ impl PaymentContract {
                 return Err(Error::EscrowSettlementRequired);
             }
         }
-        
+
         let old_status = payment.status;
+
+        // Security fix: a terminal payment (Released/Refunded/Cancelled) must
+        // never move back to a non-terminal status. remove_from_request_index
+        // is only called when *entering* a terminal status, so resurrecting a
+        // terminal payment would leave req_idx_key deleted while this payment
+        // is live again, letting a fresh create_payment for the same request
+        // slip past the DuplicatePayment guard.
+        if is_terminal_status(old_status) && !is_terminal_status(status) {
+            return Err(Error::InvalidStatusTransition);
+        }
+
         payment.status = status;
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
@@ -1466,7 +1491,11 @@ impl PaymentContract {
         } else {
             let elapsed = now - schedule.cliff_timestamp;
             let duration = schedule.vest_end_timestamp - schedule.cliff_timestamp;
-            (schedule.total_amount * elapsed as i128) / duration as i128
+            schedule
+                .total_amount
+                .checked_mul(elapsed as i128)
+                .and_then(|p| p.checked_div(duration as i128))
+                .ok_or(Error::Overflow)?
         };
 
         let claimable = vested - schedule.claimed;

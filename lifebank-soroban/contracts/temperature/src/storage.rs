@@ -14,9 +14,11 @@ pub fn get_threshold(env: &Env, unit_id: u64) -> Option<TemperatureThreshold> {
 }
 
 pub fn set_threshold(env: &Env, unit_id: u64, threshold: &TemperatureThreshold) {
+    let key = DataKey::Threshold(unit_id);
+    env.storage().persistent().set(&key, threshold);
     env.storage()
         .persistent()
-        .set(&DataKey::Threshold(unit_id), threshold);
+        .extend_ttl(&key, crate::ORACLE_BUMP_THRESHOLD, crate::ORACLE_BUMP_TO);
 }
 
 pub fn get_temp_page(env: &Env, unit_id: u64, page: u32) -> Vec<TemperatureReading> {
@@ -27,9 +29,11 @@ pub fn get_temp_page(env: &Env, unit_id: u64, page: u32) -> Vec<TemperatureReadi
 }
 
 pub fn set_temp_page(env: &Env, unit_id: u64, page: u32, readings: &Vec<TemperatureReading>) {
+    let key = DataKey::TempPage(unit_id, page);
+    env.storage().persistent().set(&key, readings);
     env.storage()
         .persistent()
-        .set(&DataKey::TempPage(unit_id, page), readings);
+        .extend_ttl(&key, crate::ORACLE_BUMP_THRESHOLD, crate::ORACLE_BUMP_TO);
 }
 
 pub fn get_temp_page_len(env: &Env, unit_id: u64, page: u32) -> u32 {
@@ -40,7 +44,9 @@ pub fn get_temp_page_len(env: &Env, unit_id: u64, page: u32) -> u32 {
 }
 
 pub fn set_temp_page_len(env: &Env, unit_id: u64, page: u32, len: u32) {
+    let key = DataKey::TempPageLen(unit_id, page);
+    env.storage().persistent().set(&key, &len);
     env.storage()
         .persistent()
-        .set(&DataKey::TempPageLen(unit_id, page), &len);
+        .extend_ttl(&key, crate::ORACLE_BUMP_THRESHOLD, crate::ORACLE_BUMP_TO);
 }

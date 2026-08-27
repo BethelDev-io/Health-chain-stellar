@@ -730,11 +730,25 @@ impl TemperatureContract {
             return Err(ContractError::Unauthorized);
         }
 
-        // Verify unit has recorded violations before reporting
-        let violations = Self::get_violations(env.clone(), unit_id, 0, 1)?;
-        if violations.is_empty() {
-            return Err(ContractError::UnitNotFound);
+        // The caller-supplied summary must describe the unit actually being
+        // reported — otherwise a whitelisted oracle could satisfy the
+        // violation check for one unit while forwarding a fabricated summary
+        // for an unrelated one.
+        if excursion_summary.unit_id != unit_id {
+            return Err(ContractError::ExcursionSummaryMismatch);
         }
+
+        // Derive violation_count/peak_celsius_x100/detected_at from the
+        // actual stored readings rather than trusting caller input — this
+        // also verifies the unit has recorded violations before reporting.
+        let (violation_count, peak_celsius_x100, detected_at) =
+            Self::compute_excursion_data(&env, unit_id)?;
+        let verified_summary = ExcursionSummary {
+            unit_id,
+            violation_count,
+            peak_celsius_x100,
+            detected_at,
+        };
 
         let coordinator_addr: Address = env
             .storage()
@@ -744,18 +758,74 @@ impl TemperatureContract {
 
         let coord_client = CoordinatorContractClient::new(&env, &coordinator_addr);
         coord_client
-            .try_flag_temperature_breach(&caller, &payment_id, &excursion_summary)
+            .try_flag_temperature_breach(&caller, &payment_id, &verified_summary)
             .map_err(|_| ContractError::CoordinatorCallFailed)?
             .map_err(|_| ContractError::CoordinatorCallFailed)?;
 
         ExcursionReported {
             unit_id,
             payment_id,
-            violation_count: excursion_summary.violation_count,
+            violation_count,
         }
         .publish(&env);
 
         Ok(())
+    }
+
+    /// Scan every stored reading page for `unit_id` and compute the real
+    /// violation_count, peak_celsius_x100 (the reading with the largest
+    /// deviation from the configured threshold), and detected_at (the
+    /// timestamp of the most recent violation).
+    fn compute_excursion_data(env: &Env, unit_id: u64) -> Result<(u32, i32, u64), ContractError> {
+        let threshold =
+            storage::get_threshold(env, unit_id).ok_or(ContractError::ThresholdNotFound)?;
+
+        let mut violation_count: u32 = 0;
+        let mut peak_celsius_x100: i32 = 0;
+        let mut peak_deviation: i32 = -1;
+        let mut detected_at: u64 = 0;
+
+        let mut page_num: u32 = 0;
+        loop {
+            let page_len = storage::get_temp_page_len(env, unit_id, page_num);
+            if page_len == 0 && page_num > 0 {
+                break;
+            }
+            if page_len == 0 {
+                page_num = page_num.saturating_add(1);
+                continue;
+            }
+
+            let page = storage::get_temp_page(env, unit_id, page_num);
+            for i in 0..page_len {
+                let reading = page.get(i).unwrap_or_default();
+                if reading.is_violation {
+                    violation_count = violation_count.saturating_add(1);
+
+                    let deviation = if reading.temperature_celsius_x100 < threshold.min_celsius_x100
+                    {
+                        threshold.min_celsius_x100 - reading.temperature_celsius_x100
+                    } else {
+                        reading.temperature_celsius_x100 - threshold.max_celsius_x100
+                    };
+                    if deviation > peak_deviation {
+                        peak_deviation = deviation;
+                        peak_celsius_x100 = reading.temperature_celsius_x100;
+                    }
+                    if reading.timestamp > detected_at {
+                        detected_at = reading.timestamp;
+                    }
+                }
+            }
+
+            page_num = page_num.saturating_add(1);
+        }
+
+        if violation_count == 0 {
+            return Err(ContractError::UnitNotFound);
+        }
+
+        Ok((violation_count, peak_celsius_x100, detected_at))
     }
 
     /// Upgrade the contract to a new WASM hash. Only admin can call this.

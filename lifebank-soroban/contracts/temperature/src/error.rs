@@ -18,4 +18,6 @@ pub enum ContractError {
     CoordinatorCallFailed = 609,
     /// Caller is not a whitelisted oracle
     OracleNotWhitelisted = 610,
+    /// excursion_summary.unit_id does not match the unit_id argument
+    ExcursionSummaryMismatch = 611,
 }
