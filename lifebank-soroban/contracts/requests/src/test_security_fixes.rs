@@ -331,3 +331,98 @@ fn test_batch_create_requests_at_cap_succeeds() {
     assert_eq!(ids.len(), 50);
     assert_eq!(RequestContract::get_request_counter(env.clone()).unwrap(), 50);
 }
+
+/// #1305: Verify set_fulfilling_org requires blood bank authorization.
+/// An unauthorized blood bank cannot mark itself as fulfilling a request.
+#[test]
+fn test_set_fulfilling_org_rejects_unauthorized_blood_bank() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    // Approve the request
+    RequestContract::update_request_status(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        RequestStatus::Approved,
+        String::from_str(&env, "Approved"),
+    )
+    .unwrap();
+
+    // An unauthorized blood bank tries to mark itself as fulfilling
+    let unauthorized_blood_bank = Address::generate(&env);
+    let result = RequestContract::set_fulfilling_org(
+        env.clone(),
+        unauthorized_blood_bank.clone(),
+        request_id,
+        unauthorized_blood_bank.clone(),
+    );
+
+    // Should fail: blood bank not authorized
+    assert_eq!(result, Err(ContractError::NotAuthorizedBloodBank));
+}
+
+/// #1305: Verify set_fulfilling_org allows authorized blood banks to mark themselves.
+#[test]
+fn test_set_fulfilling_org_authorized_blood_bank_succeeds() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    // Authorize a blood bank
+    let blood_bank = Address::generate(&env);
+    RequestContract::authorize_blood_bank(env.clone(), blood_bank.clone()).unwrap();
+
+    // Approve the request
+    RequestContract::update_request_status(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        RequestStatus::Approved,
+        String::from_str(&env, "Approved"),
+    )
+    .unwrap();
+
+    // Authorized blood bank marks itself as fulfilling
+    let result = RequestContract::set_fulfilling_org(
+        env.clone(),
+        blood_bank.clone(),
+        request_id,
+        blood_bank.clone(),
+    );
+
+    assert!(result.is_ok());
+
+    let request = RequestContract::get_request(env.clone(), request_id).unwrap();
+    assert_eq!(request.fulfilled_by, Some(blood_bank.clone()));
+}
+
+/// #1305: Verify set_fulfilling_org admin can still mark any org as fulfilling.
+#[test]
+fn test_set_fulfilling_org_admin_can_set_any_org() {
+    let (env, admin, hospital) = setup_authorized_hospital();
+    let request_id = create_urgent_request(&env, &hospital);
+
+    // Approve the request
+    RequestContract::update_request_status(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        RequestStatus::Approved,
+        String::from_str(&env, "Approved"),
+    )
+    .unwrap();
+
+    // Admin marks any org (e.g., an unauthorized one) as fulfilling
+    let any_org = Address::generate(&env);
+    let result = RequestContract::set_fulfilling_org(
+        env.clone(),
+        admin.clone(),
+        request_id,
+        any_org.clone(),
+    );
+
+    assert!(result.is_ok());
+
+    let request = RequestContract::get_request(env.clone(), request_id).unwrap();
+    assert_eq!(request.fulfilled_by, Some(any_org));
+}

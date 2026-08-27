@@ -544,9 +544,8 @@ impl RequestContract {
         Ok(())
     }
 
-    /// Record which organization (blood bank) fulfilled a request. Admin only.
-    /// Used to bind a request to the org that actually served it, so downstream
-    /// consumers (e.g. reputation rating) can verify the relationship.
+    /// Record which organization (blood bank) fulfilled a request.
+    /// Authorized blood banks can set themselves as the fulfilling org; admin can set any org.
     pub fn set_fulfilling_org(
         env: Env,
         caller: Address,
@@ -557,8 +556,16 @@ impl RequestContract {
         storage::require_initialized(&env)?;
 
         let admin = storage::get_admin(&env);
-        if caller != admin {
-            return Err(ContractError::Unauthorized);
+        let is_admin = caller == admin;
+        let is_authorized_blood_bank = storage::is_blood_bank_authorized(&env, &caller);
+
+        if !is_admin && !is_authorized_blood_bank {
+            return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
+        // Blood banks may only set themselves; admin can set any org
+        if !is_admin && caller != org_id {
+            return Err(ContractError::NotAuthorizedBloodBank);
         }
 
         let mut request =
