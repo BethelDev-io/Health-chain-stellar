@@ -112,6 +112,8 @@ pub struct BloodRequest {
     pub fulfilled_quantity_ml: u32,
     /// Reservation ID on the inventory contract, set when units are reserved.
     pub reservation_id: Option<u64>,
+    /// Organization (blood bank) that fulfilled this request, if any.
+    pub fulfilled_by: Option<Address>,
     /// Request lifecycle transitions with rationale and accounting details.
     pub history: Vec<RequestHistoryEntry>,
 }

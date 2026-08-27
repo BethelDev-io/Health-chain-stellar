@@ -2,6 +2,15 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::{DataKey, Error, IdentityContract, OrgUnverified, OrgVerified, Organization, Role};
 
+/// Persistent storage TTL constants (ledgers; one ledger ≈ 5 s on mainnet).
+/// Mirrors the constants used elsewhere in the crate (see lib.rs).
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days
+
+/// Maximum number of organizations allowed in a single batch verify/revoke
+/// call, bounding the per-transaction CPU/memory cost of the operation.
+const MAX_BATCH_SIZE: u32 = 50;
+
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -103,6 +112,9 @@ impl VerificationTrait for VerificationImpl {
         organization.verified_timestamp = Some(now);
 
         env.storage().persistent().set(&org_key, &organization);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Store verification metadata
         let metadata = VerificationMetadata {
@@ -116,6 +128,9 @@ impl VerificationTrait for VerificationImpl {
 
         let metadata_key = DataKey::VerificationMetadata(org_id.clone());
         env.storage().persistent().set(&metadata_key, &metadata);
+        env.storage()
+            .persistent()
+            .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Record verification event
         Self::record_verification_event(
@@ -162,6 +177,9 @@ impl VerificationTrait for VerificationImpl {
         organization.verified_timestamp = None;
 
         env.storage().persistent().set(&org_key, &organization);
+        env.storage()
+            .persistent()
+            .extend_ttl(&org_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Update verification metadata
         let metadata = VerificationMetadata {
@@ -175,6 +193,9 @@ impl VerificationTrait for VerificationImpl {
 
         let metadata_key = DataKey::VerificationMetadata(org_id.clone());
         env.storage().persistent().set(&metadata_key, &metadata);
+        env.storage()
+            .persistent()
+            .extend_ttl(&metadata_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Record revocation event
         Self::record_verification_event(
@@ -258,6 +279,10 @@ impl VerificationTrait for VerificationImpl {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
+        if org_ids.len() > MAX_BATCH_SIZE {
+            return Err(Error::InvalidInput);
+        }
+
         let mut verified_count = 0u32;
 
         for i in 0..org_ids.len() {
@@ -278,6 +303,10 @@ impl VerificationTrait for VerificationImpl {
     ) -> Result<u32, Error> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+
+        if org_ids.len() > MAX_BATCH_SIZE {
+            return Err(Error::InvalidInput);
+        }
 
         let mut revoked_count = 0u32;
 
@@ -324,5 +353,8 @@ impl VerificationImpl {
 
         events.push_back(event);
         env.storage().persistent().set(&events_key, &events);
+        env.storage()
+            .persistent()
+            .extend_ttl(&events_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
