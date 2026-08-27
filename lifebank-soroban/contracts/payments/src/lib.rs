@@ -158,6 +158,8 @@ pub enum Error {
     EscrowSettlementRequired = 520,
     /// Payment is not in a disputable state (must be Pending or Locked).
     InvalidStatus = 522,
+    /// Dispute timeout exceeds the maximum allowed value.
+    InvalidTimeout = 524,
     /// update_status cannot move a payment out of a terminal status
     /// (Released/Refunded/Cancelled) back into a non-terminal one — doing so
     /// would leave req_idx_key deleted while a live payment still exists,
@@ -178,6 +180,9 @@ const STATS_KEY: soroban_sdk::Symbol = symbol_short!("STATS");
 const REQ_CONTRACT: soroban_sdk::Symbol = symbol_short!("REQ_CTR");
 /// Default dispute auto-refund timeout in seconds (7 days).
 const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 7 * 24 * 3600;
+/// Maximum allowed dispute timeout (365 days). Bounds the value admins can set
+/// so `payment.updated_at + timeout` can never overflow u64.
+const MAX_DISPUTE_TIMEOUT_SECS: u64 = 365 * 24 * 3600;
 /// Instance storage key for the dispute timeout override.
 const DISPUTE_TIMEOUT: soroban_sdk::Symbol = symbol_short!("DISP_TO");
 
@@ -1468,8 +1473,10 @@ impl PaymentContract {
 
         // Reject if donor already has an active (uncompleted) vesting schedule.
         // Overwriting it would silently destroy unclaimed rewards.
-        if env.storage().persistent().has(&vesting_key(&donor)) {
-            return Err(Error::ActiveVestingExists);
+        if let Some(existing) = load_vesting(&env, &donor) {
+            if existing.claimed < existing.total_amount {
+                return Err(Error::ActiveVestingExists);
+            }
         }
 
         let now = env.ledger().timestamp();
@@ -1530,7 +1537,11 @@ impl PaymentContract {
         }
 
         schedule.claimed = new_claimed;
-        store_vesting(&env, &schedule);
+        if new_claimed == schedule.total_amount {
+            env.storage().persistent().remove(&vesting_key(&donor));
+        } else {
+            store_vesting(&env, &schedule);
+        }
 
         let token_client = token::Client::new(&env, &schedule.reward_token);
         token_client.transfer(&env.current_contract_address(), &donor, &claimable);
@@ -1555,6 +1566,9 @@ impl PaymentContract {
     pub fn set_dispute_timeout(env: Env, admin: Address, timeout_secs: u64) -> Result<(), Error> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        if timeout_secs > MAX_DISPUTE_TIMEOUT_SECS {
+            return Err(Error::InvalidTimeout);
+        }
         env.storage()
             .instance()
             .set(&DISPUTE_TIMEOUT, &timeout_secs);
@@ -1597,7 +1611,11 @@ impl PaymentContract {
             if payment.token.is_none() {
                 continue;
             }
-            if now < payment.updated_at + timeout {
+            let expires_at = payment
+                .updated_at
+                .checked_add(timeout)
+                .ok_or(Error::Overflow)?;
+            if now < expires_at {
                 continue;
             }
 
