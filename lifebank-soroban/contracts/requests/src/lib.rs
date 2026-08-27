@@ -227,6 +227,7 @@ impl RequestContract {
         );
 
         storage::set_request(&env, &request);
+        storage::append_to_hospital_requests(&env, &hospital, request_id);
         events::emit_request_created(&env, &request);
 
         Ok(request_id)
@@ -294,6 +295,7 @@ impl RequestContract {
                 false,
             );
             storage::set_request(&env, &request);
+            storage::append_to_hospital_requests(&env, &hospital, request_id);
             events::emit_request_created(&env, &request);
             ids.push_back(request_id);
         }
@@ -544,9 +546,8 @@ impl RequestContract {
         Ok(())
     }
 
-    /// Record which organization (blood bank) fulfilled a request. Admin only.
-    /// Used to bind a request to the org that actually served it, so downstream
-    /// consumers (e.g. reputation rating) can verify the relationship.
+    /// Record which organization (blood bank) fulfilled a request.
+    /// Authorized blood banks can set themselves as the fulfilling org; admin can set any org.
     pub fn set_fulfilling_org(
         env: Env,
         caller: Address,
@@ -557,8 +558,16 @@ impl RequestContract {
         storage::require_initialized(&env)?;
 
         let admin = storage::get_admin(&env);
-        if caller != admin {
-            return Err(ContractError::Unauthorized);
+        let is_admin = caller == admin;
+        let is_authorized_blood_bank = storage::is_blood_bank_authorized(&env, &caller);
+
+        if !is_admin && !is_authorized_blood_bank {
+            return Err(ContractError::NotAuthorizedBloodBank);
+        }
+
+        // Blood banks may only set themselves; admin can set any org
+        if !is_admin && caller != org_id {
+            return Err(ContractError::NotAuthorizedBloodBank);
         }
 
         let mut request =
@@ -601,6 +610,7 @@ impl RequestContract {
 
     /// Returns a paginated slice of blood requests for a given hospital.
     /// `page` is zero-indexed; `page_size` is capped at 50 to bound instruction usage.
+    /// Uses a per-hospital index for O(hospital_request_count) complexity instead of O(system_counter).
     pub fn get_requests_by_hospital(
         env: Env,
         hospital_id: Address,
@@ -609,22 +619,16 @@ impl RequestContract {
     ) -> Result<soroban_sdk::Vec<BloodRequest>, ContractError> {
         storage::require_initialized(&env)?;
         let page_size = page_size.min(50) as usize;
-        let counter = storage::get_request_counter(&env);
+        let request_ids = storage::get_hospital_request_ids(&env, &hospital_id);
         let start = (page as usize).saturating_mul(page_size);
+        let end = (start + page_size).min(request_ids.len());
+
         let mut results: soroban_sdk::Vec<BloodRequest> = soroban_sdk::Vec::new(&env);
-        let mut matched: usize = 0;
-        let mut collected: usize = 0;
-        for id in 1..=counter {
-            if let Some(req) = storage::get_request(&env, id) {
-                if req.hospital_id == hospital_id {
-                    if matched >= start && collected < page_size {
-                        results.push_back(req);
-                        collected += 1;
-                    }
-                    matched += 1;
-                    if collected == page_size {
-                        break;
-                    }
+        if start < request_ids.len() {
+            for i in start..end {
+                let id = request_ids.get(i).unwrap();
+                if let Some(req) = storage::get_request(&env, id) {
+                    results.push_back(req);
                 }
             }
         }

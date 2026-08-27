@@ -20,6 +20,7 @@ pub enum DataKey {
     AuthorizedBloodBank(Address),
     AuthorizedRider(Address),
     Request(u64),
+    HospitalRequestIds(Address), // Maps hospital to Vec<u64> of request IDs
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

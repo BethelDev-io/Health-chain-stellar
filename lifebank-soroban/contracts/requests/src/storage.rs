@@ -104,7 +104,6 @@ pub fn revoke_blood_bank(env: &Env, blood_bank: &Address) {
         .remove(&DataKey::AuthorizedBloodBank(blood_bank.clone()));
 }
 
-#[allow(dead_code)]
 pub fn is_blood_bank_authorized(env: &Env, blood_bank: &Address) -> bool {
     env.storage()
         .instance()
@@ -162,4 +161,28 @@ pub fn default_metadata(env: &Env) -> ContractMetadata {
         name: String::from_str(env, "Blood Request Management"),
         version: 1,
     }
+}
+
+/// Append a request ID to a hospital's request index.
+pub fn append_to_hospital_requests(env: &Env, hospital: &Address, request_id: u64) {
+    let key = DataKey::HospitalRequestIds(hospital.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(request_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Retrieve all request IDs for a hospital.
+pub fn get_hospital_request_ids(env: &Env, hospital: &Address) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::HospitalRequestIds(hospital.clone());
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
 }

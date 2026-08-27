@@ -747,7 +747,7 @@ fn test_penalty_system_impacts_score() {
 
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = 1000);
-    c.submit_rating(&ENTITY, &5, &1000);
+    c.submit_rating(&admin, &ENTITY, &5, &1000);
     let score_before = c.get_score(&ENTITY).unwrap().score;
 
     c.apply_penalty(&ENTITY, &ViolationType::Medium);
@@ -813,12 +813,12 @@ fn test_appeals_system() {
 
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = 1000);
-    c.submit_rating(&ENTITY, &5, &1000);
+    c.submit_rating(&admin, &ENTITY, &5, &1000);
 
     c.apply_penalty(&ENTITY, &ViolationType::Medium);
 
-    // Appeal the penalty (ID 0)
-    c.appeal_penalty(&ENTITY, &0);
+    // Appeal the penalty (ID 0) — requires admin signature
+    c.appeal_penalty(&admin, &ENTITY, &0);
 
     let input = c.get_input(&ENTITY).unwrap();
     let p = input.penalties.get(0).unwrap();
@@ -832,6 +832,29 @@ fn test_appeals_system() {
 }
 
 #[test]
+fn test_appeal_penalty_requires_admin_auth() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    let unauthorized = Address::generate(&env);
+    c.init(&admin);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    c.submit_rating(&admin, &ENTITY, &5, &1000);
+    c.apply_penalty(&ENTITY, &ViolationType::Medium);
+
+    // Unauthorized address cannot appeal
+    let result = c.try_appeal_penalty(&unauthorized, &ENTITY, &0);
+    assert!(result.is_err());
+
+    // Admin can appeal
+    let result = c.try_appeal_penalty(&admin, &ENTITY, &0);
+    assert!(result.is_ok());
+    let input = c.get_input(&ENTITY).unwrap();
+    assert!(input.penalties.get(0).unwrap().is_appealed);
+}
+
+#[test]
 fn test_resolve_penalty_marks_as_resolved() {
     let (env, cid) = setup();
     let c = client(&env, &cid);
@@ -840,7 +863,7 @@ fn test_resolve_penalty_marks_as_resolved() {
 
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = 1000);
-    c.submit_rating(&ENTITY, &5, &1000);
+    c.submit_rating(&admin, &ENTITY, &5, &1000);
 
     c.apply_penalty(&ENTITY, &ViolationType::Minor);
 
@@ -879,7 +902,7 @@ fn test_reputation_pause_allows_get_score() {
 
     // Submit a rating before pausing
     env.ledger().with_mut(|l| l.timestamp = 1000);
-    c.submit_rating(&ENTITY, &4i64, &1000u64);
+    c.submit_rating(&admin, &ENTITY, &4i64, &1000u64);
     c.pause(&admin);
 
     // Read still works
@@ -900,7 +923,7 @@ fn test_reputation_unpause_restores_writes() {
 
     // Should succeed after unpause
     env.ledger().with_mut(|l| l.timestamp = 2000);
-    c.submit_rating(&ENTITY, &5i64, &2000u64);
+    c.submit_rating(&admin, &ENTITY, &5i64, &2000u64);
     c.submit_rating(&admin, &ENTITY, &5i64, &2000u64);
 }
 
@@ -922,9 +945,11 @@ fn test_reputation_non_admin_cannot_pause() {
 fn test_submit_rating_rejects_future_timestamp() {
     let (env, cid) = setup();
     let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
     env.ledger().with_mut(|l| l.timestamp = 1000);
 
-    let result = c.try_submit_rating(&ENTITY, &5i64, &(1000 + 365 * DAY));
+    let result = c.try_submit_rating(&admin, &ENTITY, &5i64, &(1000 + 365 * DAY));
     assert_eq!(result, Err(Ok(Error::InvalidInput)));
 }
 
@@ -932,9 +957,11 @@ fn test_submit_rating_rejects_future_timestamp() {
 fn test_record_assignment_rejects_future_timestamp() {
     let (env, cid) = setup();
     let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
     env.ledger().with_mut(|l| l.timestamp = 1000);
 
-    let result = c.try_record_assignment(&ENTITY, &true, &300u64, &(1000 + 365 * DAY));
+    let result = c.try_record_assignment(&admin, &ENTITY, &true, &300u64, &(1000 + 365 * DAY));
     assert_eq!(result, Err(Ok(Error::InvalidInput)));
 }
 
@@ -942,11 +969,13 @@ fn test_record_assignment_rejects_future_timestamp() {
 fn test_flag_fraud_rejects_future_timestamp() {
     let (env, cid) = setup();
     let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
     env.ledger().with_mut(|l| l.timestamp = 1000);
     // Seed entity so the timestamp check (not EntityNotFound) is what's exercised.
-    c.record_assignment(&ENTITY, &true, &300u64, &1000u64);
+    c.record_assignment(&admin, &ENTITY, &true, &300u64, &1000u64);
 
-    let result = c.try_flag_fraud(&ENTITY, &(1000 + 365 * DAY));
+    let result = c.try_flag_fraud(&admin, &ENTITY, &(1000 + 365 * DAY));
     assert_eq!(result, Err(Ok(Error::InvalidInput)));
 }
 
@@ -954,9 +983,11 @@ fn test_flag_fraud_rejects_future_timestamp() {
 fn test_submit_rating_accepts_current_ledger_timestamp() {
     let (env, cid) = setup();
     let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
     env.ledger().with_mut(|l| l.timestamp = 1000);
 
-    let result = c.try_submit_rating(&ENTITY, &5i64, &1000u64);
+    let result = c.try_submit_rating(&admin, &ENTITY, &5i64, &1000u64);
     assert!(result.is_ok());
 }
 
