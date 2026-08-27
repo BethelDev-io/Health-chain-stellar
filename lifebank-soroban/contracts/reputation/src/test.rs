@@ -1010,3 +1010,43 @@ fn test_penalty_ids_remain_unique_after_trim_cycles() {
         input.next_penalty_id
     );
 }
+
+// ── Issue #1308: TTL extension ────────────────────────────────────────────────
+
+#[test]
+fn test_ttl_extends_on_persistent_access() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    // Seed entity with rating
+    c.submit_rating(&admin, &ENTITY, &5i64, &1000u64);
+    assert!(c.get_score(&ENTITY).is_some(), "Score should exist after rating");
+
+    // Access should extend TTL (no panic or error)
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+    let score = c.get_score(&ENTITY);
+    assert!(score.is_some(), "Score should still be accessible");
+
+    // Record assignment should extend TTL
+    c.record_assignment(&admin, &ENTITY, &true, &300u64, &2000u64);
+    let input = c.get_input(&ENTITY);
+    assert!(input.is_some(), "Input should still be accessible after record_assignment");
+
+    // Apply penalty should extend TTL
+    env.ledger().with_mut(|l| l.timestamp = 3000);
+    c.apply_penalty(&admin, &ENTITY, &ViolationType::Minor);
+    let input = c.get_input(&ENTITY);
+    assert!(
+        input.is_some(),
+        "Input should still be accessible after apply_penalty"
+    );
+
+    // Flag fraud should extend TTL
+    env.ledger().with_mut(|l| l.timestamp = 4000);
+    c.flag_fraud(&admin, &ENTITY, &4000u64);
+    let input = c.get_input(&ENTITY);
+    assert!(input.is_some(), "Input should still be accessible after flag_fraud");
+}
