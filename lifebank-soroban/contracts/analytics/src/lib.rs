@@ -17,6 +17,34 @@ pub struct AnalyticsInitialized {
     pub admin: Address,
 }
 
+#[contractevent(topics = ["anlytcs", "donation"], data_format = "single-value")]
+pub struct DonationRecorded {
+    pub total_donations: u64,
+}
+
+#[contractevent(topics = ["anlytcs", "request"], data_format = "single-value")]
+pub struct RequestRecorded {
+    pub total_requests: u64,
+}
+
+#[contractevent(topics = ["anlytcs", "delivery"], data_format = "single-value")]
+pub struct DeliveryRecorded {
+    pub total_deliveries: u64,
+}
+
+#[contractevent(topics = ["anlytcs", "payment"], data_format = "vec")]
+pub struct PaymentReleaseRecorded {
+    pub amount: i128,
+    pub total_payments_released: u64,
+    pub total_volume: i128,
+}
+
+#[contractevent(topics = ["anlytcs", "period"], data_format = "vec")]
+pub struct ReportingPeriodUpdated {
+    pub period_type: PeriodType,
+    pub duration_secs: u64,
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CONTRACT_VERSION: u32 = 1;
@@ -87,6 +115,20 @@ fn get_counter_i128(env: &Env, key: &DataKey) -> i128 {
     env.storage().persistent().get(key).unwrap_or(0i128)
 }
 
+fn set_counter_u64(env: &Env, key: &DataKey, value: u64) {
+    env.storage().persistent().set(key, &value);
+    env.storage()
+        .persistent()
+        .extend_ttl(key, SNAPSHOT_TTL_MIN, SNAPSHOT_TTL_MAX);
+}
+
+fn set_counter_i128(env: &Env, key: &DataKey, value: i128) {
+    env.storage().persistent().set(key, &value);
+    env.storage()
+        .persistent()
+        .extend_ttl(key, SNAPSHOT_TTL_MIN, SNAPSHOT_TTL_MAX);
+}
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -131,21 +173,11 @@ impl AnalyticsContract {
         env.storage().instance().set(&DataKey::Config, &config);
 
         // Initialize lifetime counters to zero in persistent storage.
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDonations, &0u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalRequests, &0u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDeliveries, &0u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalPaymentsReleased, &0u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalVolume, &0i128);
+        set_counter_u64(&env, &DataKey::TotalDonations, 0u64);
+        set_counter_u64(&env, &DataKey::TotalRequests, 0u64);
+        set_counter_u64(&env, &DataKey::TotalDeliveries, 0u64);
+        set_counter_u64(&env, &DataKey::TotalPaymentsReleased, 0u64);
+        set_counter_i128(&env, &DataKey::TotalVolume, 0i128);
 
         AnalyticsInitialized { admin }.publish(&env);
 
@@ -176,6 +208,13 @@ impl AnalyticsContract {
         };
 
         env.storage().instance().set(&DataKey::Config, &cfg);
+
+        ReportingPeriodUpdated {
+            period_type,
+            duration_secs,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -191,9 +230,13 @@ impl AnalyticsContract {
         save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalDonations) + 1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDonations, &total);
+        set_counter_u64(&env, &DataKey::TotalDonations, total);
+
+        DonationRecorded {
+            total_donations: total,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -207,9 +250,13 @@ impl AnalyticsContract {
         save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalRequests) + 1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalRequests, &total);
+        set_counter_u64(&env, &DataKey::TotalRequests, total);
+
+        RequestRecorded {
+            total_requests: total,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -223,9 +270,13 @@ impl AnalyticsContract {
         save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalDeliveries) + 1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalDeliveries, &total);
+        set_counter_u64(&env, &DataKey::TotalDeliveries, total);
+
+        DeliveryRecorded {
+            total_deliveries: total,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -244,14 +295,18 @@ impl AnalyticsContract {
         save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total_payments = get_counter_u64(&env, &DataKey::TotalPaymentsReleased) + 1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalPaymentsReleased, &total_payments);
+        set_counter_u64(&env, &DataKey::TotalPaymentsReleased, total_payments);
 
         let total_volume = get_counter_i128(&env, &DataKey::TotalVolume).saturating_add(amount);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalVolume, &total_volume);
+        set_counter_i128(&env, &DataKey::TotalVolume, total_volume);
+
+        PaymentReleaseRecorded {
+            amount,
+            total_payments_released: total_payments,
+            total_volume,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
