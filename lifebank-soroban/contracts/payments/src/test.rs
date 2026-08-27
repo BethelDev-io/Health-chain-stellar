@@ -1387,3 +1387,36 @@ fn test_update_status_allows_terminal_on_non_escrow() {
     assert_eq!(p.status, PaymentStatus::Released);
 }
 
+// ── Instance storage TTL (#1300) ───────────────────────────────────────────────
+
+#[test]
+fn test_instance_ttl_extended_on_initialize() {
+    let (env, cid, _admin) = setup_with_admin();
+    let ttl = env.as_contract(&cid, || env.storage().instance().get_ttl());
+    assert!(
+        ttl >= PERSISTENT_BUMP_TO,
+        "instance TTL should be extended to PERSISTENT_BUMP_TO on initialize, got {}",
+        ttl
+    );
+}
+
+#[test]
+fn test_instance_ttl_rebumped_on_subsequent_invocation() {
+    let (env, cid, _admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += PERSISTENT_BUMP_THRESHOLD + 1;
+    });
+
+    let _ = client.is_paused();
+
+    let ttl = env.as_contract(&cid, || env.storage().instance().get_ttl());
+    assert!(
+        ttl >= PERSISTENT_BUMP_TO,
+        "instance TTL should be re-extended on a later invocation, got {}",
+        ttl
+    );
+}
+
+

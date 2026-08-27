@@ -21,6 +21,10 @@ pub enum ContractError {
     NotRequestOwner = 312,
     /// Transition requires a non-empty human-readable reason.
     InvalidReason = 313,
+    /// Request already has a reservation ID; overwrite would orphan the prior reservation.
+    ReservationAlreadySet = 314,
+    /// Batch exceeds the maximum number of entries allowed in one call.
+    BatchTooLarge = 315,
 }
 
 #[cfg(test)]
@@ -46,6 +50,8 @@ mod tests {
             ContractError::InvalidRequestStatus,
             ContractError::NotRequestOwner,
             ContractError::InvalidReason,
+            ContractError::ReservationAlreadySet,
+            ContractError::BatchTooLarge,
         ];
 
         for i in 0..all.len() {

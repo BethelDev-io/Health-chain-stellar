@@ -187,6 +187,15 @@ const DISPUTE_TIMEOUT: soroban_sdk::Symbol = symbol_short!("DISP_TO");
 const PERSISTENT_BUMP_THRESHOLD: u32 = 518_400; // ~30 days
 const PERSISTENT_BUMP_TO: u32 = 1_036_800; // ~60 days
 
+/// Extend instance-storage TTL using the same threshold/extend-to as persistent
+/// writes. Instance storage holds admin/config/stats keys; without an explicit
+/// bump the entire contract instance can archive and become unusable.
+fn extend_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+}
+
 fn payment_key(id: u64) -> (u64, &'static str) {
     (id, "pay")
 }
@@ -216,6 +225,7 @@ fn status_index_key(status: PaymentStatus) -> (u32, &'static str) {
 }
 
 fn get_counter(env: &Env) -> u64 {
+    extend_instance_ttl(env);
     env.storage()
         .instance()
         .get(&PAYMENT_COUNTER)
@@ -224,9 +234,11 @@ fn get_counter(env: &Env) -> u64 {
 
 fn set_counter(env: &Env, val: u64) {
     env.storage().instance().set(&PAYMENT_COUNTER, &val);
+    extend_instance_ttl(env);
 }
 
 fn get_pledge_counter(env: &Env) -> u64 {
+    extend_instance_ttl(env);
     env.storage()
         .instance()
         .get(&PLEDGE_COUNTER)
@@ -235,6 +247,7 @@ fn get_pledge_counter(env: &Env) -> u64 {
 
 fn set_pledge_counter(env: &Env, val: u64) {
     env.storage().instance().set(&PLEDGE_COUNTER, &val);
+    extend_instance_ttl(env);
 }
 
 fn store_payment(env: &Env, payment: &Payment) {
@@ -392,6 +405,7 @@ fn remove_from_status_index(env: &Env, status: PaymentStatus, id: u64) {
 // ── Stats helpers ──────────────────────────────────────────────────────────────
 
 fn load_stats(env: &Env) -> PaymentStats {
+    extend_instance_ttl(env);
     env.storage()
         .instance()
         .get(&STATS_KEY)
@@ -407,6 +421,7 @@ fn load_stats(env: &Env) -> PaymentStats {
 
 fn store_stats(env: &Env, stats: &PaymentStats) {
     env.storage().instance().set(&STATS_KEY, stats);
+    extend_instance_ttl(env);
 }
 
 fn update_stats_on_transition(
@@ -686,6 +701,7 @@ impl PaymentContract {
         if let Some(rc) = requests_contract {
             env.storage().instance().set(&REQ_CONTRACT, &rc);
         }
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -704,6 +720,7 @@ impl PaymentContract {
             return Err(Error::Unauthorized);
         }
         env.storage().instance().set(&PAUSED_KEY, &true);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -718,14 +735,17 @@ impl PaymentContract {
             return Err(Error::Unauthorized);
         }
         env.storage().instance().set(&PAUSED_KEY, &false);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
     pub fn is_paused(env: Env) -> bool {
+        extend_instance_ttl(&env);
         env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
     }
 
     fn require_not_paused(env: &Env) -> Result<(), Error> {
+        extend_instance_ttl(env);
         if env.storage().instance().get(&PAUSED_KEY).unwrap_or(false) {
             return Err(Error::ContractPaused);
         }
@@ -733,6 +753,7 @@ impl PaymentContract {
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
+        extend_instance_ttl(env);
         let stored: Address = env
             .storage()
             .instance()
@@ -1537,6 +1558,7 @@ impl PaymentContract {
         env.storage()
             .instance()
             .set(&DISPUTE_TIMEOUT, &timeout_secs);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -1657,6 +1679,7 @@ impl PaymentContract {
         new_wasm_hash: soroban_sdk::BytesN<32>,
     ) -> Result<(), Error> {
         admin.require_auth();
+        extend_instance_ttl(&env);
         let stored_admin: Address = env
             .storage()
             .instance()

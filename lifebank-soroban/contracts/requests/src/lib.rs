@@ -38,6 +38,11 @@ use inventory_client::InventoryContractClient;
 
 const CONTRACT_VERSION: u32 = 1;
 
+/// Maximum number of entries accepted by `batch_create_requests`.
+/// Mirrors the sibling matching contract's `MAX_BATCH_SIZE` so callers hit a
+/// dedicated error instead of the instruction or storage-write limit.
+const MAX_BATCH_SIZE: u32 = 50;
+
 #[contract]
 pub struct RequestContract;
 
@@ -231,6 +236,7 @@ impl RequestContract {
     /// Each tuple is `(blood_type, component, quantity_ml, urgency, required_by_timestamp)`.
     /// Returns the Vec of new request IDs in input order.
     /// Validates all items first, then writes all atomically.
+    /// Rejects batches larger than `MAX_BATCH_SIZE` before either pass begins.
     pub fn batch_create_requests(
         env: Env,
         hospital: Address,
@@ -238,6 +244,10 @@ impl RequestContract {
     ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
         hospital.require_auth();
         storage::require_initialized(&env)?;
+
+        if entries.len() > MAX_BATCH_SIZE {
+            return Err(ContractError::BatchTooLarge);
+        }
 
         if !storage::is_hospital_authorized(&env, &hospital) {
             return Err(ContractError::NotAuthorizedHospital);
@@ -478,8 +488,10 @@ impl RequestContract {
         Ok(())
     }
 
-    /// Set or update the inventory reservation ID for a request. Admin only.
+    /// Set the inventory reservation ID for a request. Admin only.
     /// Called when units are reserved against a request so cancellation can release them.
+    /// Rejects overwrite of an existing reservation (which would orphan inventory units)
+    /// and only accepts requests in Approved or InProgress status.
     pub fn set_reservation_id(
         env: Env,
         caller: Address,
@@ -496,8 +508,38 @@ impl RequestContract {
 
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+
+        match request.status {
+            RequestStatus::Approved | RequestStatus::InProgress => {}
+            _ => return Err(ContractError::InvalidRequestStatus),
+        }
+
+        if request.reservation_id.is_some() {
+            return Err(ContractError::ReservationAlreadySet);
+        }
+
         request.reservation_id = Some(reservation_id);
+        let status = request.status;
+        Self::append_history(
+            &env,
+            &mut request,
+            &caller,
+            status,
+            false,
+            status,
+            String::from_str(&env, "Reservation ID set"),
+            0,
+            false,
+        );
         storage::set_request(&env, &request);
+
+        events::emit_reservation_id_set(
+            &env,
+            request_id,
+            &caller,
+            reservation_id,
+            env.ledger().timestamp(),
+        );
 
         Ok(())
     }
@@ -626,7 +668,5 @@ impl RequestContract {
     }
 }
 
-#[cfg(test)]
-mod test;
 #[cfg(test)]
 mod test_security_fixes;

@@ -395,15 +395,15 @@ fn test_cancel_request_with_reservation_id() {
         &8_000u64,
     );
 
-    let reservation_id = 42u64;
-    client.set_reservation_id(&admin, &request_id, &reservation_id);
-
     client.update_request_status(
         &admin,
         &request_id,
         &RequestStatus::Approved,
         &String::from_str(&env, "Approved"),
     );
+
+    let reservation_id = 42u64;
+    client.set_reservation_id(&admin, &request_id, &reservation_id);
 
     client.cancel_request(
         &hospital,
@@ -416,6 +416,6 @@ fn test_cancel_request_with_reservation_id() {
     assert_eq!(request.reservation_id, None);
 
     let history = client.get_request_history(&request_id);
-    let cancel_entry = history.get(2).unwrap();
+    let cancel_entry = history.get(3).unwrap();
     assert_eq!(cancel_entry.released_reservation, true);
 }
