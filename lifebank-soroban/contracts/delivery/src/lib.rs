@@ -5,6 +5,18 @@ use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, Env,
 };
 
+mod request_client {
+    use soroban_sdk::{contractclient, Env};
+
+    #[contractclient(name = "RequestContractClient")]
+    #[allow(dead_code)]
+    pub trait RequestContractInterface {
+        fn get_request_counter(env: Env) -> u64;
+    }
+}
+
+use request_client::RequestContractClient;
+
 #[contractevent(topics = ["delivery", "init"], data_format = "vec")]
 pub struct DeliveryInitialized {
     pub admin: Address,
