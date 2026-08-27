@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{DataKey, Error, OrgUnverified, OrgVerified, Organization};
+use crate::{DataKey, Error, IdentityContract, OrgUnverified, OrgVerified, Organization, Role};
 
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
@@ -296,17 +296,7 @@ impl VerificationTrait for VerificationImpl {
 
 impl VerificationImpl {
     fn require_admin(env: &Env, account: &Address) -> Result<(), Error> {
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(Error::Unauthorized)?;
-
-        if account == &stored_admin {
-            Ok(())
-        } else {
-            Err(Error::Unauthorized)
-        }
+        IdentityContract::require_role(env, account, Role::Admin)
     }
 
     fn record_verification_event(
