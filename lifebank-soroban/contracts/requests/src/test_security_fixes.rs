@@ -426,3 +426,130 @@ fn test_set_fulfilling_org_admin_can_set_any_org() {
     let request = RequestContract::get_request(env.clone(), request_id).unwrap();
     assert_eq!(request.fulfilled_by, Some(any_org));
 }
+
+/// #1304: Verify per-hospital index-based pagination scales with hospital's request count,
+/// not the global request counter.
+#[test]
+fn test_get_requests_by_hospital_uses_per_hospital_index() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let hospital_a = Address::generate(&env);
+    let hospital_b = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    RequestContract::initialize(env.clone(), admin.clone(), Address::generate(&env)).unwrap();
+    RequestContract::authorize_hospital(env.clone(), hospital_a.clone()).unwrap();
+    RequestContract::authorize_hospital(env.clone(), hospital_b.clone()).unwrap();
+
+    env.ledger().set_timestamp(1_000);
+
+    // Hospital A creates 3 requests
+    let req_a1 = RequestContract::create_request(
+        env.clone(),
+        hospital_a.clone(),
+        BloodType::OPositive,
+        BloodComponent::WholeBlood,
+        500,
+        Urgency::Urgent,
+        1_600,
+    )
+    .unwrap();
+    let req_a2 = RequestContract::create_request(
+        env.clone(),
+        hospital_a.clone(),
+        BloodType::APositive,
+        BloodComponent::Plasma,
+        300,
+        Urgency::Routine,
+        2_000,
+    )
+    .unwrap();
+    let req_a3 = RequestContract::create_request(
+        env.clone(),
+        hospital_a.clone(),
+        BloodType::BPositive,
+        BloodComponent::RedCells,
+        400,
+        Urgency::Critical,
+        1_800,
+    )
+    .unwrap();
+
+    // Hospital B creates 2 requests
+    let req_b1 = RequestContract::create_request(
+        env.clone(),
+        hospital_b.clone(),
+        BloodType::ONegative,
+        BloodComponent::Platelets,
+        100,
+        Urgency::Scheduled,
+        2_500,
+    )
+    .unwrap();
+    let req_b2 = RequestContract::create_request(
+        env.clone(),
+        hospital_b.clone(),
+        BloodType::ABNegative,
+        BloodComponent::Cryoprecipitate,
+        50,
+        Urgency::Urgent,
+        1_700,
+    )
+    .unwrap();
+
+    // Get all requests for hospital A (page 0, size 10)
+    let results_a = RequestContract::get_requests_by_hospital(
+        env.clone(),
+        hospital_a.clone(),
+        0,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(results_a.len(), 3);
+    let ids_a: Vec<u64> = (0..results_a.len())
+        .map(|i| results_a.get(i).unwrap().id)
+        .collect();
+    assert_eq!(ids_a, vec![req_a1, req_a2, req_a3]);
+
+    // Get all requests for hospital B (page 0, size 10)
+    let results_b = RequestContract::get_requests_by_hospital(
+        env.clone(),
+        hospital_b.clone(),
+        0,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(results_b.len(), 2);
+    let ids_b: Vec<u64> = (0..results_b.len())
+        .map(|i| results_b.get(i).unwrap().id)
+        .collect();
+    assert_eq!(ids_b, vec![req_b1, req_b2]);
+
+    // Test pagination: get first page with size 2 for hospital A
+    let page_0_a = RequestContract::get_requests_by_hospital(
+        env.clone(),
+        hospital_a.clone(),
+        0,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(page_0_a.len(), 2);
+    assert_eq!(page_0_a.get(0).unwrap().id, req_a1);
+    assert_eq!(page_0_a.get(1).unwrap().id, req_a2);
+
+    // Get second page for hospital A
+    let page_1_a = RequestContract::get_requests_by_hospital(
+        env.clone(),
+        hospital_a.clone(),
+        1,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(page_1_a.len(), 1);
+    assert_eq!(page_1_a.get(0).unwrap().id, req_a3);
+}
