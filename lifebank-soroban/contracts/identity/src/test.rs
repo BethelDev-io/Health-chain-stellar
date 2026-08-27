@@ -22,7 +22,7 @@ fn test_initialize_sets_admin_counter_and_admin_role() {
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     assert!(client.is_initialized());
     assert_eq!(client.get_admin(), admin.clone());
@@ -39,7 +39,7 @@ fn test_initialize_emits_event() {
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     assert_eq!(env.events().all().len(), 1);
 }
@@ -53,7 +53,7 @@ fn test_initialize_cannot_run_twice() {
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let result = client.try_initialize(&admin);
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
@@ -190,8 +190,8 @@ fn test_has_role() {
         &vec![&env],
     );
 
-    assert!(client.ac_has_role(&owner, &Role::Hospital));
-    assert!(!client.ac_has_role(&owner, &Role::BloodBank));
+    assert!(client.has_role(&owner, &Role::Hospital));
+    assert!(!client.has_role(&owner, &Role::BloodBank));
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn test_verify_organization() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let name = String::from_str(&env, "City Blood Bank");
@@ -316,7 +316,7 @@ fn test_verify_organization_not_admin() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let name = String::from_str(&env, "City Blood Bank");
@@ -347,7 +347,7 @@ fn test_verify_organization_already_verified() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let name = String::from_str(&env, "City Blood Bank");
@@ -380,7 +380,7 @@ fn test_verify_organization_not_found() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let fake_org = Address::generate(&env);
     let result = client.try_verify_organization(&admin, &fake_org);
@@ -396,7 +396,7 @@ fn test_unverify_organization() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let name = String::from_str(&env, "City Blood Bank");
@@ -440,7 +440,7 @@ fn test_unverify_organization_already_unverified() {
     let client = IdentityContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let name = String::from_str(&env, "City Blood Bank");
@@ -461,6 +461,61 @@ fn test_unverify_organization_already_unverified() {
     let reason = String::from_str(&env, "Test reason");
     let result = client.try_unverify_organization(&admin, &org_id, &reason);
     assert_eq!(result, Err(Ok(Error::AlreadyUnverified)));
+}
+
+// ---------------------------------------------------------------------------
+// Batch verification tests (issue: unbounded org_ids vectors)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_batch_verify_organizations_rejects_oversized_batch() {
+    use crate::verification::{VerificationImpl, VerificationTrait};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // MAX_BATCH_SIZE is 50; 51 addresses must be rejected up front, before
+    // any per-element verification is attempted (no orgs need to exist).
+    let mut org_ids = vec![&env];
+    for _ in 0..51u32 {
+        org_ids.push_back(Address::generate(&env));
+    }
+
+    let result = env.as_contract(&contract_id, || {
+        VerificationImpl::batch_verify_organizations(env.clone(), admin.clone(), org_ids)
+    });
+    assert_eq!(result, Err(Error::InvalidInput));
+}
+
+#[test]
+fn test_batch_revoke_organizations_rejects_oversized_batch() {
+    use crate::verification::{VerificationImpl, VerificationTrait};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let mut org_ids = vec![&env];
+    for _ in 0..51u32 {
+        org_ids.push_back(Address::generate(&env));
+    }
+
+    let reason = String::from_str(&env, "oversized batch");
+    let result = env.as_contract(&contract_id, || {
+        VerificationImpl::batch_revoke_organizations(env.clone(), admin.clone(), org_ids, reason)
+    });
+    assert_eq!(result, Err(Error::InvalidInput));
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +542,10 @@ fn setup_fulfilled_request(
         &RequestStatus::Approved,
         &String::from_str(env, "approved"),
     );
+    // The hospital doubles as the requests-contract admin in these tests, and
+    // as the org being rated, so it is used here to record itself as the
+    // fulfilling organization before the request is marked Fulfilled.
+    request_client.set_fulfilling_org(&hospital.clone(), &request_id, &hospital.clone());
     request_client.update_request_status(
         &hospital.clone(),
         &request_id,
@@ -625,6 +684,51 @@ fn test_rate_organization_invalid_rating_six() {
 }
 
 #[test]
+fn test_rate_organization_rejects_org_that_did_not_fulfill_request() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+    let requests_id = env.register(RequestContract, ());
+    let requests_client = RequestContractClient::new(&env, &requests_id);
+
+    let hospital = Address::generate(&env);
+    client.initialize(&hospital);
+    client.set_requests_contract(&hospital, &requests_id);
+    requests_client.initialize(&hospital, &requests_id);
+    let loc = BytesN::from_array(&env, &[0u8; 32]);
+
+    // The org that actually fulfills the request.
+    client.register_organization(
+        &hospital,
+        &OrgType::BloodBank,
+        &String::from_str(&env, "Real Fulfiller"),
+        &String::from_str(&env, "REAL001"),
+        &loc,
+        &vec![&env],
+    );
+
+    // An unrelated, registered org that never handled this request.
+    let unrelated_org = Address::generate(&env);
+    client.register_organization(
+        &unrelated_org,
+        &OrgType::BloodBank,
+        &String::from_str(&env, "Unrelated Bank"),
+        &String::from_str(&env, "UNRL001"),
+        &loc,
+        &vec![&env],
+    );
+
+    let request_id = setup_fulfilled_request(&env, &hospital, &requests_client);
+
+    // Hospital tries to rate the unrelated org instead of the one that
+    // actually fulfilled the request; this must be rejected.
+    let result = client.try_rate_organization(&hospital, &unrelated_org, &5, &request_id);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
 fn test_rate_organization_duplicate_prevented() {
     let env = Env::default();
     env.mock_all_auths();
@@ -668,7 +772,7 @@ fn test_rate_organization_not_found() {
     let ghost = Address::generate(&env);
 
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
     client.set_requests_contract(&admin, &requests_id);
     requests_client.initialize(&admin, &requests_id);
     let result = client.try_rate_organization(&admin, &ghost, &3, &1_u64);
@@ -750,7 +854,7 @@ fn test_award_badge() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
@@ -778,7 +882,7 @@ fn test_award_badge_duplicate_prevented() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
@@ -804,7 +908,7 @@ fn test_revoke_badge() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
@@ -832,7 +936,7 @@ fn test_revoke_badge_not_found() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let owner = Address::generate(&env);
     let loc = BytesN::from_array(&env, &[0u8; 32]);
@@ -872,16 +976,110 @@ fn test_verify_delivery() {
         &vec![&env],
     );
 
-    let verifier = Address::generate(&env);
+    // The recipient verifying their own delivery is an authorized path.
     let recipient = Address::generate(&env);
 
-    client.verify_delivery(&verifier, &1_u64, &owner, &recipient, &500_u32, &true);
+    client.verify_delivery(&recipient, &1_u64, &owner, &recipient, &500_u32, &true);
 
     let proof = client.get_delivery(&1_u64).unwrap();
     assert_eq!(proof.request_id, 1);
     assert_eq!(proof.quantity_delivered, 500);
     assert!(proof.temperature_ok);
     assert!(proof.verified);
+}
+
+#[test]
+fn test_verify_delivery_authorized_rider() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let owner = Address::generate(&env);
+    let loc = BytesN::from_array(&env, &[0u8; 32]);
+    client.register_organization(
+        &owner,
+        &OrgType::BloodBank,
+        &String::from_str(&env, "Bank"),
+        &String::from_str(&env, "DEL005"),
+        &loc,
+        &vec![&env],
+    );
+
+    let rider = Address::generate(&env);
+    client.grant_role(&admin, &rider, &Role::Rider);
+    let recipient = Address::generate(&env);
+
+    client.verify_delivery(&rider, &1_u64, &owner, &recipient, &500_u32, &true);
+
+    let proof = client.get_delivery(&1_u64).unwrap();
+    assert!(proof.verified);
+}
+
+#[test]
+fn test_verify_delivery_unauthorized_verifier_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let loc = BytesN::from_array(&env, &[0u8; 32]);
+    client.register_organization(
+        &owner,
+        &OrgType::BloodBank,
+        &String::from_str(&env, "Bank"),
+        &String::from_str(&env, "DEL006"),
+        &loc,
+        &vec![&env],
+    );
+
+    // Neither a Rider, the recipient, nor the org itself.
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let result = client.try_verify_delivery(&stranger, &1_u64, &owner, &recipient, &500_u32, &true);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert!(client.get_delivery(&1_u64).is_none());
+}
+
+#[test]
+fn test_verify_delivery_prevents_overwrite() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IdentityContract, ());
+    let client = IdentityContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let loc = BytesN::from_array(&env, &[0u8; 32]);
+    client.register_organization(
+        &owner,
+        &OrgType::BloodBank,
+        &String::from_str(&env, "Bank"),
+        &String::from_str(&env, "DEL007"),
+        &loc,
+        &vec![&env],
+    );
+
+    let recipient = Address::generate(&env);
+    client.verify_delivery(&recipient, &1_u64, &owner, &recipient, &500_u32, &true);
+
+    // A second attempt to record a proof for the same request_id must fail,
+    // even from a legitimately authorized verifier, and must not tamper with
+    // the originally recorded data.
+    let result =
+        client.try_verify_delivery(&recipient, &1_u64, &owner, &recipient, &999_u32, &false);
+    assert_eq!(result, Err(Ok(Error::DeliveryAlreadyVerified)));
+
+    let proof = client.get_delivery(&1_u64).unwrap();
+    assert_eq!(proof.quantity_delivered, 500);
+    assert!(proof.temperature_ok);
 }
 
 #[test]
@@ -937,7 +1135,7 @@ fn test_get_top_rated_organizations() {
     let contract_id = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
 
     let loc = BytesN::from_array(&env, &[0u8; 32]);
 
@@ -1660,7 +1858,7 @@ fn setup_identity<'a>() -> (Env, IdentityContractClient<'a>, Address) {
     let cid = env.register(IdentityContract, ());
     let client = IdentityContractClient::new(&env, &cid);
     let admin = Address::generate(&env);
-    client.ac_initialize(&admin);
+    client.initialize(&admin);
     (env, client, admin)
 }
 

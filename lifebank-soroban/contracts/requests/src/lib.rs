@@ -205,6 +205,7 @@ impl RequestContract {
             assigned_units: soroban_sdk::Vec::new(&env),
             fulfilled_quantity_ml: 0,
             reservation_id: None,
+            fulfilled_by: None,
             history: soroban_sdk::Vec::new(&env),
         };
         let mut request = request;
@@ -267,6 +268,7 @@ impl RequestContract {
                 assigned_units: soroban_sdk::Vec::new(&env),
                 fulfilled_quantity_ml: 0,
                 reservation_id: None,
+                fulfilled_by: None,
                 history: soroban_sdk::Vec::new(&env),
             };
             let mut request = request;
@@ -495,6 +497,31 @@ impl RequestContract {
         let mut request =
             storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
         request.reservation_id = Some(reservation_id);
+        storage::set_request(&env, &request);
+
+        Ok(())
+    }
+
+    /// Record which organization (blood bank) fulfilled a request. Admin only.
+    /// Used to bind a request to the org that actually served it, so downstream
+    /// consumers (e.g. reputation rating) can verify the relationship.
+    pub fn set_fulfilling_org(
+        env: Env,
+        caller: Address,
+        request_id: u64,
+        org_id: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        storage::require_initialized(&env)?;
+
+        let admin = storage::get_admin(&env);
+        if caller != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut request =
+            storage::get_request(&env, request_id).ok_or(ContractError::RequestNotFound)?;
+        request.fulfilled_by = Some(org_id);
         storage::set_request(&env, &request);
 
         Ok(())
