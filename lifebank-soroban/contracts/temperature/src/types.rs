@@ -57,6 +57,10 @@ pub enum DataKey {
     Threshold(u64),
     TempPage(u64, u32),
     TempPageLen(u64, u32),
+    /// Cursor tracking the last active (non-full) temperature page for a
+    /// unit, so `log_reading` can insert in O(1) instead of scanning from
+    /// page 0 on every call.
+    CurrentPage(u64),
     /// Tracks consecutive violation streak for a blood unit
     ConsecutiveViolationStreak(u64),
     /// Tracks if unit has been compromised (3+ consecutive violations)

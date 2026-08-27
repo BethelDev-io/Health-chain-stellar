@@ -56,10 +56,10 @@ fn current_period_index(env: &Env, duration_secs: u64) -> u64 {
     env.ledger().timestamp() / duration_secs
 }
 
-fn load_snapshot(env: &Env, period_index: u64) -> MetricsSnapshot {
+fn load_snapshot(env: &Env, period_type: PeriodType, period_index: u64) -> MetricsSnapshot {
     env.storage()
         .persistent()
-        .get(&DataKey::Snapshot(period_index))
+        .get(&DataKey::Snapshot(period_type, period_index))
         .unwrap_or(MetricsSnapshot {
             period_index,
             total_donations: 0,
@@ -71,8 +71,8 @@ fn load_snapshot(env: &Env, period_index: u64) -> MetricsSnapshot {
         })
 }
 
-fn save_snapshot(env: &Env, snapshot: &MetricsSnapshot) {
-    let key = DataKey::Snapshot(snapshot.period_index);
+fn save_snapshot(env: &Env, period_type: PeriodType, snapshot: &MetricsSnapshot) {
+    let key = DataKey::Snapshot(period_type, snapshot.period_index);
     env.storage().persistent().set(&key, snapshot);
     env.storage()
         .persistent()
@@ -185,10 +185,10 @@ impl AnalyticsContract {
     pub fn record_donation(env: Env) -> Result<(), AnalyticsError> {
         let cfg = require_authorized_caller(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
-        let mut snap = load_snapshot(&env, idx);
+        let mut snap = load_snapshot(&env, cfg.reporting_period.period_type, idx);
         snap.total_donations += 1;
         snap.last_updated = env.ledger().timestamp();
-        save_snapshot(&env, &snap);
+        save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalDonations) + 1;
         env.storage()
@@ -201,10 +201,10 @@ impl AnalyticsContract {
     pub fn record_request(env: Env) -> Result<(), AnalyticsError> {
         let cfg = require_authorized_caller(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
-        let mut snap = load_snapshot(&env, idx);
+        let mut snap = load_snapshot(&env, cfg.reporting_period.period_type, idx);
         snap.total_requests += 1;
         snap.last_updated = env.ledger().timestamp();
-        save_snapshot(&env, &snap);
+        save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalRequests) + 1;
         env.storage()
@@ -217,10 +217,10 @@ impl AnalyticsContract {
     pub fn record_delivery(env: Env) -> Result<(), AnalyticsError> {
         let cfg = require_authorized_caller(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
-        let mut snap = load_snapshot(&env, idx);
+        let mut snap = load_snapshot(&env, cfg.reporting_period.period_type, idx);
         snap.total_deliveries += 1;
         snap.last_updated = env.ledger().timestamp();
-        save_snapshot(&env, &snap);
+        save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total = get_counter_u64(&env, &DataKey::TotalDeliveries) + 1;
         env.storage()
@@ -237,11 +237,11 @@ impl AnalyticsContract {
 
         let cfg = require_authorized_caller(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
-        let mut snap = load_snapshot(&env, idx);
+        let mut snap = load_snapshot(&env, cfg.reporting_period.period_type, idx);
         snap.total_payments_released += 1;
         snap.total_volume = snap.total_volume.saturating_add(amount);
         snap.last_updated = env.ledger().timestamp();
-        save_snapshot(&env, &snap);
+        save_snapshot(&env, cfg.reporting_period.period_type, &snap);
 
         let total_payments = get_counter_u64(&env, &DataKey::TotalPaymentsReleased) + 1;
         env.storage()
@@ -261,15 +261,19 @@ impl AnalyticsContract {
     pub fn get_current_snapshot(env: Env) -> Result<MetricsSnapshot, AnalyticsError> {
         let cfg = require_initialized(&env)?;
         let idx = current_period_index(&env, cfg.reporting_period.duration_secs);
-        Ok(load_snapshot(&env, idx))
+        Ok(load_snapshot(&env, cfg.reporting_period.period_type, idx))
     }
 
-    /// Get the metrics snapshot for a specific period index.
-    pub fn get_snapshot(env: Env, period_index: u64) -> Result<MetricsSnapshot, AnalyticsError> {
+    /// Get the metrics snapshot for a specific period type and period index.
+    pub fn get_snapshot(
+        env: Env,
+        period_type: PeriodType,
+        period_index: u64,
+    ) -> Result<MetricsSnapshot, AnalyticsError> {
         require_initialized(&env)?;
         env.storage()
             .persistent()
-            .get(&DataKey::Snapshot(period_index))
+            .get(&DataKey::Snapshot(period_type, period_index))
             .ok_or(AnalyticsError::PeriodNotFound)
     }
 
