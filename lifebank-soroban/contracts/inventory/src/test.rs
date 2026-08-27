@@ -2322,16 +2322,20 @@ fn test_release_reservation_by_contract_releases_reservation() {
 
     // Release via release_reservation_by_contract with the authorized contract
     let authorized_addr = Address::generate(&env);
-    InventoryContract::release_reservation_by_contract(&env, &authorized_addr, reservation_id)
+    // Pass env by value and authorized_addr by value (not by reference) as the
+    // function signature requires owned Env and Address (issue #1317).
+    InventoryContract::release_reservation_by_contract(env.clone(), authorized_addr, reservation_id)
         .unwrap();
 
     // Verify unit is Available again
     let released = client.get_blood_unit(&unit_id);
     assert_eq!(released.status, BloodStatus::Available);
 
-    // Reservation should be removed
-    let result = client.get_reservation(&reservation_id);
-    assert_eq!(result, Err(ContractError::ReservationNotFound));
+    // Reservation should be removed.
+    // `get_reservation` panics when not found; use try_get_reservation and
+    // verify an error is returned (issue #1317).
+    let result = client.try_get_reservation(&reservation_id);
+    assert!(result.is_err(), "reservation should have been removed");
 }
 
 #[test]
@@ -2340,7 +2344,8 @@ fn test_release_reservation_by_contract_fails_on_unknown_reservation() {
     let (env, admin, client, _) = create_test_contract();
     env.ledger().set_timestamp(1000u64);
 
-    // Try to release a non-existent reservation
-    InventoryContract::release_reservation_by_contract(&env, &Address::generate(&env), 999)
+    // Try to release a non-existent reservation.
+    // Pass env and address by value, not by reference (issue #1317).
+    InventoryContract::release_reservation_by_contract(env.clone(), Address::generate(&env), 999)
         .unwrap();
 }

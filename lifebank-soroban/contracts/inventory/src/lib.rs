@@ -422,8 +422,18 @@ impl InventoryContract {
         let role = Self::get_role(&env, &authorized_by);
         Self::assert_can_transition(&role, &new_status)?;
 
-        let _admin = storage::get_admin(&env);
-        if role != Role::Admin && authorized_by != blood_unit.bank_id {
+        // Allow the transition when:
+        //   (a) the caller is the admin, OR
+        //   (b) the caller is the owning blood bank, OR
+        //   (c) the caller holds a delegated role (Rider / Hospital) whose
+        //       permission to perform this specific transition was already
+        //       confirmed by assert_can_transition above.
+        //
+        // Without branch (c) a granted Rider / Hospital address could never
+        // pass this gate because their address is never equal to bank_id,
+        // making grant_role effectively dead code (issue #1316).
+        let delegated_role = matches!(role, Role::Rider | Role::Hospital);
+        if role != Role::Admin && authorized_by != blood_unit.bank_id && !delegated_role {
             return Err(ContractError::Unauthorized);
         }
 
