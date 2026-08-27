@@ -959,3 +959,54 @@ fn test_submit_rating_accepts_current_ledger_timestamp() {
     let result = c.try_submit_rating(&ENTITY, &5i64, &1000u64);
     assert!(result.is_ok());
 }
+
+// ── Issue #1309: Penalty ID uniqueness ─────────────────────────────────────────
+
+#[test]
+fn test_penalty_ids_remain_unique_after_trim_cycles() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    // Seed entity
+    c.record_assignment(&admin, &ENTITY, &true, &300u64, &1000u64);
+
+    // Apply penalties until we trigger multiple trim cycles (> 100 penalties)
+    let mut penalty_ids = Vec::new();
+    for i in 0..150u32 {
+        env.ledger().with_mut(|l| l.timestamp = 1000 + i as u64);
+        let score = c.apply_penalty(&admin, &ENTITY, &ViolationType::Minor);
+        let input = c.get_input(&ENTITY).unwrap();
+        // Track the ID of the last penalty applied
+        if let Some(p) = input.penalties.back() {
+            penalty_ids.push(p.id);
+        }
+    }
+
+    // Verify all penalty IDs are unique
+    let mut id_set = Vec::new();
+    for id in penalty_ids.iter() {
+        assert!(
+            !id_set.contains(id),
+            "Penalty ID {} appears multiple times after trim cycles",
+            id
+        );
+        id_set.push(*id);
+    }
+
+    // Verify at least one trim cycle happened (penalties reduced from 150 to 100)
+    let input = c.get_input(&ENTITY).unwrap();
+    assert_eq!(
+        input.penalties.len(),
+        100,
+        "Expected exactly 100 penalties after trim"
+    );
+
+    // Verify counter has advanced beyond vector length
+    assert!(
+        input.next_penalty_id > 100,
+        "Penalty ID counter should be > 100, got {}",
+        input.next_penalty_id
+    );
+}

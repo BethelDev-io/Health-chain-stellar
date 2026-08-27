@@ -100,6 +100,8 @@ pub struct ReputationInput {
     pub last_active_at: u64,
     /// History of applied penalties
     pub penalties: Vec<PenaltyRecord>,
+    /// Monotonically increasing counter for penalty IDs (never decreases)
+    pub next_penalty_id: u32,
 }
 
 /// Full breakdown of the computed reputation score.
@@ -394,6 +396,7 @@ impl ReputationContract {
                 fraud_flags: 0,
                 last_active_at: timestamp,
                 penalties: Vec::new(&env),
+                next_penalty_id: 0,
             });
 
         // Append rating (score stored ×100)
@@ -446,6 +449,7 @@ impl ReputationContract {
                 fraud_flags: 0,
                 last_active_at: timestamp,
                 penalties: Vec::new(&env),
+                next_penalty_id: 0,
             });
 
         input.total_assigned += 1;
@@ -556,7 +560,8 @@ impl ReputationContract {
             .get(&DataKey::Input(entity_id))
             .ok_or(Error::EntityNotFound)?;
 
-        let id = input.penalties.len();
+        let id = input.next_penalty_id;
+        input.next_penalty_id += 1;
         input.penalties.push_back(PenaltyRecord {
             id,
             violation_type: violation,
