@@ -508,6 +508,11 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidRequestState);
         }
 
+        // Reject empty unit allocations — no units means no delivery guarantee
+        if unit_ids.len() == 0 {
+            return Err(CoordinatorError::NoUnitsSpecified);
+        }
+
         // Reserve each inventory unit
         let inv_addr: Address = env
             .storage()

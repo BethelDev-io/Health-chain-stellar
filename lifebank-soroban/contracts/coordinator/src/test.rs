@@ -597,6 +597,31 @@ fn test_flag_temperature_breach_non_locked_payment_fails() {
     );
 }
 
+// ── Issue #1311: Empty unit_ids rejection ────────────────────────────────────
+
+#[test]
+fn test_allocate_units_rejects_empty_unit_ids() {
+    let h = setup();
+    seed_pending_request(&h, 1);
+    let payment_id = create_locked_payment(&h, 1);
+
+    let result = h.coord.try_allocate_units(
+        &1u64,
+        &vec![&h.env],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+    assert_eq!(
+        result,
+        Err(Ok(CoordinatorError::NoUnitsSpecified)),
+        "Empty unit_ids must be rejected"
+    );
+
+    let wf = h.coord.try_get_workflow(&1u64);
+    assert!(wf.is_err(), "Workflow should not exist after rejected allocation");
+}
+
 /// flag_temperature_breach on a missing payment returns PaymentNotFound.
 #[test]
 fn test_flag_temperature_breach_missing_payment_fails() {
