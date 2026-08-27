@@ -1054,3 +1054,240 @@ fn test_rollback_blocked_after_delivery() {
     let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
     assert_eq!(payment.status, PaymentStatus::Locked);
 }
+
+// ── Issue #1312: expire_workflow must respect pause() circuit breaker ────────────
+
+/// #1312: expire_workflow is blocked when contract is paused.
+/// The pause() circuit breaker should prevent all state-mutating functions,
+/// including expire_workflow, from releasing units or refunding payments
+/// during an active incident.
+#[test]
+fn test_expire_workflow_blocked_when_paused() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    seed_pending_request(&h, 5);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 5);
+
+    h.coord.allocate_units(
+        &5u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    let wf = h.coord.get_workflow(&5u64);
+    // Advance time past the expiry window.
+    h.env.ledger().with_mut(|l| l.timestamp = wf.expires_at + 1);
+
+    // Pause the contract before expiry
+    h.coord.pause(&h.admin);
+    assert!(h.coord.is_paused());
+
+    // expire_workflow should be rejected due to pause
+    let result = h.coord.try_expire_workflow(&5u64);
+    assert_eq!(
+        result,
+        Err(Ok(CoordinatorError::ContractPaused)),
+        "expire_workflow must be blocked when contract is paused"
+    );
+
+    // Verify state remains unchanged
+    let wf_unchanged = h.coord.get_workflow(&5u64);
+    assert_eq!(wf_unchanged.status, WorkflowStatus::Allocated);
+
+    let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
+    assert_eq!(unit.status, BloodStatus::Reserved);
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Locked);
+}
+
+/// #1312: expire_workflow succeeds after unpause, confirming pause enforcement.
+#[test]
+fn test_expire_workflow_succeeds_after_unpause() {
+    let h = setup();
+    h.env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    seed_pending_request(&h, 6);
+    let unit_id = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 6);
+
+    h.coord.allocate_units(
+        &6u64,
+        &vec![&h.env, unit_id],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    let wf = h.coord.get_workflow(&6u64);
+    h.env.ledger().with_mut(|l| l.timestamp = wf.expires_at + 1);
+
+    // Pause then unpause
+    h.coord.pause(&h.admin);
+    h.coord.unpause(&h.admin);
+
+    // Now expire_workflow should succeed
+    h.coord.expire_workflow(&6u64);
+
+    let wf_after = h.coord.get_workflow(&6u64);
+    assert_eq!(wf_after.status, WorkflowStatus::RolledBack);
+
+    let unit = MockInventoryContractClient::new(&h.env, &h.inv_id).get_blood_unit(&unit_id);
+    assert_eq!(unit.status, BloodStatus::Available);
+
+    let payment = MockPaymentContractClient::new(&h.env, &h.pay_id).get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Refunded);
+}
+
+// ── Issue #1313: allocate_units must allow re-allocation after terminal status ──
+
+/// #1313: allocate_units should block re-allocation if an existing non-terminal
+/// workflow exists, but should allow re-allocation if the existing workflow
+/// is in a terminal state (RolledBack or Settled).
+#[test]
+fn test_allocate_units_blocks_for_active_non_terminal_workflow() {
+    let h = setup();
+    seed_pending_request(&h, 7);
+    let unit_id1 = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 7);
+
+    // First allocation succeeds
+    h.coord.allocate_units(
+        &7u64,
+        &vec![&h.env, unit_id1],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    assert_eq!(
+        h.coord.get_workflow(&7u64).status,
+        WorkflowStatus::Allocated
+    );
+
+    // Attempt to allocate again for the same request with different units
+    let unit_id2 = register_unit(&h);
+    let result = h.coord.try_allocate_units(
+        &7u64,
+        &vec![&h.env, unit_id2],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    assert_eq!(
+        result,
+        Err(Ok(CoordinatorError::WorkflowAlreadyStarted)),
+        "Cannot re-allocate while workflow is in non-terminal Allocated state"
+    );
+}
+
+/// #1313: allocate_units should allow re-allocation after a RolledBack workflow.
+/// This enables retry scenarios where a failed allocation is rolled back and
+/// a new allocation is attempted on the same request_id.
+#[test]
+fn test_allocate_units_allows_reallocation_after_rollback() {
+    let h = setup();
+    seed_pending_request(&h, 8);
+    let unit_id1 = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 8);
+
+    // First allocation
+    h.coord.allocate_units(
+        &8u64,
+        &vec![&h.env, unit_id1],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    assert_eq!(
+        h.coord.get_workflow(&8u64).status,
+        WorkflowStatus::Allocated
+    );
+
+    // Rollback the first allocation
+    h.coord.rollback(&8u64);
+    assert_eq!(
+        h.coord.get_workflow(&8u64).status,
+        WorkflowStatus::RolledBack
+    );
+
+    // Now attempt to allocate again with a different unit
+    seed_pending_request(&h, 8); // Restore request to Pending
+    let unit_id2 = register_unit(&h);
+    let payment_id2 = create_locked_payment(&h, 8);
+
+    let result = h.coord.try_allocate_units(
+        &8u64,
+        &vec![&h.env, unit_id2],
+        &payment_id2,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    assert!(
+        result.is_ok(),
+        "Re-allocation after RolledBack terminal state must succeed"
+    );
+
+    // New allocation should have replaced the old one
+    let wf = h.coord.get_workflow(&8u64);
+    assert_eq!(wf.status, WorkflowStatus::Allocated);
+    assert_eq!(wf.payment_id, payment_id2);
+}
+
+/// #1313: allocate_units should allow re-allocation after a Settled workflow.
+/// Once payment is settled, the workflow is terminal and can be replaced.
+#[test]
+fn test_allocate_units_allows_reallocation_after_settled() {
+    let h = setup();
+    seed_pending_request(&h, 9);
+    let unit_id1 = register_unit(&h);
+    let payment_id = create_locked_payment(&h, 9);
+
+    // First allocation through settlement
+    h.coord.allocate_units(
+        &9u64,
+        &vec![&h.env, unit_id1],
+        &payment_id,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    h.coord
+        .confirm_delivery(&9u64, &h.admin, &String::from_str(&h.env, "Hospital-C"));
+    h.coord.settle_payment(&9u64, &h.admin);
+
+    assert_eq!(
+        h.coord.get_workflow(&9u64).status,
+        WorkflowStatus::Settled
+    );
+
+    // Attempt to allocate again for the same request
+    seed_pending_request(&h, 9); // Restore request to Pending
+    let unit_id2 = register_unit(&h);
+    let payment_id2 = create_locked_payment(&h, 9);
+
+    let result = h.coord.try_allocate_units(
+        &9u64,
+        &vec![&h.env, unit_id2],
+        &payment_id2,
+        &h.admin,
+        &BloodType::OPositive,
+    );
+
+    assert!(
+        result.is_ok(),
+        "Re-allocation after Settled terminal state must succeed"
+    );
+
+    // New allocation should have replaced the old settled one
+    let wf = h.coord.get_workflow(&9u64);
+    assert_eq!(wf.status, WorkflowStatus::Allocated);
+    assert_eq!(wf.payment_id, payment_id2);
+}

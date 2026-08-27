@@ -193,4 +193,141 @@ mod security_tests {
 
         assert!(result.is_ok());
     }
+
+    /// #1315: Verify reserve_blood rejects oversized duration_seconds with typed error.
+    /// Previously this panicked; now it should return InvalidInput error.
+    #[test]
+    fn test_reserve_blood_rejects_oversized_duration() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let bank = Address::random(&env);
+
+        env.mock_all_auths();
+
+        InventoryContract::initialize(env.clone(), admin.clone()).unwrap();
+        InventoryContract::authorize_bank(env.clone(), admin, bank.clone())
+            .unwrap();
+
+        let unit_id = InventoryContract::register_blood(
+            env.clone(),
+            bank.clone(),
+            String::from_slice(&env, "SN001"),
+            BloodType::OPos,
+            500,
+            None,
+        )
+        .unwrap();
+
+        // Attempt to reserve with duration exceeding MAX_RESERVATION_DURATION_SECS (86400 * 7)
+        let max_allowed = 86_400 * 7;
+        let oversized_duration = max_allowed + 1;
+
+        let mut unit_ids = soroban_sdk::Vec::new(&env);
+        unit_ids.push_back(unit_id);
+
+        let result = InventoryContract::reserve_blood(
+            env.clone(),
+            bank.clone(),
+            unit_ids,
+            1,
+            oversized_duration,
+        );
+
+        // Should return InvalidInput error, not panic
+        assert_eq!(result, Err(ContractError::InvalidInput));
+    }
+
+    /// #1315: Verify reserve_blood succeeds with maximum allowed duration.
+    #[test]
+    fn test_reserve_blood_accepts_max_duration() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let bank = Address::random(&env);
+
+        env.mock_all_auths();
+
+        InventoryContract::initialize(env.clone(), admin.clone()).unwrap();
+        InventoryContract::authorize_bank(env.clone(), admin, bank.clone())
+            .unwrap();
+
+        let unit_id = InventoryContract::register_blood(
+            env.clone(),
+            bank.clone(),
+            String::from_slice(&env, "SN001"),
+            BloodType::OPos,
+            500,
+            None,
+        )
+        .unwrap();
+
+        let max_allowed = 86_400 * 7;
+        let mut unit_ids = soroban_sdk::Vec::new(&env);
+        unit_ids.push_back(unit_id);
+
+        let result = InventoryContract::reserve_blood(
+            env.clone(),
+            bank,
+            unit_ids,
+            1,
+            max_allowed,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    /// #1314: Verify release_reservation_by_contract is callable as a public entry point.
+    /// This tests that the function signature matches the requests contract's #[contractclient] interface.
+    #[test]
+    fn test_release_reservation_by_contract_is_callable() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let bank = Address::random(&env);
+        let authorized_contract = Address::random(&env);
+
+        env.mock_all_auths();
+
+        InventoryContract::initialize(env.clone(), admin.clone()).unwrap();
+        InventoryContract::authorize_bank(env.clone(), admin, bank.clone())
+            .unwrap();
+
+        let unit_id = InventoryContract::register_blood(
+            env.clone(),
+            bank.clone(),
+            String::from_slice(&env, "SN001"),
+            BloodType::OPos,
+            500,
+            None,
+        )
+        .unwrap();
+
+        let mut unit_ids = soroban_sdk::Vec::new(&env);
+        unit_ids.push_back(unit_id);
+
+        let reservation_id = InventoryContract::reserve_blood(
+            env.clone(),
+            bank.clone(),
+            unit_ids,
+            1,
+            3600,
+        )
+        .unwrap();
+
+        // Verify reservation exists before release
+        let reservation = InventoryContract::get_reservation(env.clone(), reservation_id).unwrap();
+        assert_eq!(reservation.unit_ids.len(), 1);
+
+        // Call release_reservation_by_contract with owned Env and Address (the public signature)
+        let result = InventoryContract::release_reservation_by_contract(
+            env.clone(),
+            authorized_contract,
+            reservation_id,
+        );
+
+        // Should succeed (authorized_contract auth is mocked, so it passes)
+        assert!(result.is_ok());
+
+        // Verify reservation was released
+        let result = InventoryContract::get_reservation(env, reservation_id);
+        assert_eq!(result, Err(ContractError::ReservationNotFound));
+    }
 }
