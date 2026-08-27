@@ -48,6 +48,9 @@ const DEFAULT_BADGE_MIN_SCORE: i64 = 80_00;
 const DEFAULT_BADGE_MIN_INTERACTIONS: u32 = 10;
 const CONTRACT_VERSION: u32 = 1;
 
+/// TTL for persistent Input/Score entries: 30 days at 5s/ledger
+const INPUT_TTL_LEDGERS: u32 = 535_680;
+
 /// Violation types for penalties
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +103,8 @@ pub struct ReputationInput {
     pub last_active_at: u64,
     /// History of applied penalties
     pub penalties: Vec<PenaltyRecord>,
+    /// Monotonically increasing counter for penalty IDs (never decreases)
+    pub next_penalty_id: u32,
 }
 
 /// Full breakdown of the computed reputation score.
@@ -381,10 +386,11 @@ impl ReputationContract {
             return Err(Error::InvalidRating);
         }
 
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .unwrap_or(ReputationInput {
                 ratings: Vec::new(&env),
                 total_assigned: 0,
@@ -394,6 +400,7 @@ impl ReputationContract {
                 fraud_flags: 0,
                 last_active_at: timestamp,
                 penalties: Vec::new(&env),
+                next_penalty_id: 0,
             });
 
         // Append rating (score stored ×100)
@@ -414,7 +421,10 @@ impl ReputationContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         let result = Self::calculate_reputation(env.clone(), entity_id)?;
         Ok(result)
@@ -433,10 +443,11 @@ impl ReputationContract {
         Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         Self::require_valid_timestamp(&env, timestamp)?;
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .unwrap_or(ReputationInput {
                 ratings: Vec::new(&env),
                 total_assigned: 0,
@@ -446,6 +457,7 @@ impl ReputationContract {
                 fraud_flags: 0,
                 last_active_at: timestamp,
                 penalties: Vec::new(&env),
+                next_penalty_id: 0,
             });
 
         input.total_assigned += 1;
@@ -458,7 +470,10 @@ impl ReputationContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         Self::calculate_reputation(env, entity_id)
     }
@@ -474,17 +489,21 @@ impl ReputationContract {
         Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         Self::require_valid_timestamp(&env, timestamp)?;
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .ok_or(Error::EntityNotFound)?;
 
         input.fraud_flags += 1;
         input.last_active_at = timestamp;
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         Self::calculate_reputation(env, entity_id)
     }
@@ -550,13 +569,15 @@ impl ReputationContract {
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .ok_or(Error::EntityNotFound)?;
 
-        let id = input.penalties.len();
+        let id = input.next_penalty_id;
+        input.next_penalty_id += 1;
         input.penalties.push_back(PenaltyRecord {
             id,
             violation_type: violation,
@@ -577,7 +598,10 @@ impl ReputationContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         Self::calculate_reputation(env, entity_id)
     }
@@ -585,10 +609,11 @@ impl ReputationContract {
     /// File an appeal for a specific penalty.
     pub fn appeal_penalty(env: Env, entity_id: u64, penalty_id: u32) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .ok_or(Error::EntityNotFound)?;
 
         let mut found = false;
@@ -608,7 +633,10 @@ impl ReputationContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
         Ok(())
     }
 
@@ -626,10 +654,11 @@ impl ReputationContract {
             .ok_or(Error::NotAuthorized)?;
         admin.require_auth();
 
+        let input_key = DataKey::Input(entity_id);
         let mut input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .ok_or(Error::EntityNotFound)?;
 
         let mut found_idx: Option<u32> = None;
@@ -652,7 +681,10 @@ impl ReputationContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Input(entity_id), &input);
+            .set(&input_key, &input);
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
         Self::calculate_reputation(env, entity_id)
     }
 
@@ -670,11 +702,15 @@ impl ReputationContract {
     /// 5. **Fraud penalty** (10%): deducted per confirmed fraud flag.
     /// 6. **Decay**: inactivity reduces score by 1 pt per 30-day period (max 20 pt).
     pub fn calculate_reputation(env: Env, entity_id: u64) -> Result<ReputationScore, Error> {
+        let input_key = DataKey::Input(entity_id);
         let input: ReputationInput = env
             .storage()
             .persistent()
-            .get(&DataKey::Input(entity_id))
+            .get(&input_key)
             .ok_or(Error::EntityNotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         let now = env.ledger().timestamp();
 
@@ -725,9 +761,13 @@ impl ReputationContract {
             penalty_points,
         };
 
+        let score_key = DataKey::Score(entity_id);
         env.storage()
             .persistent()
-            .set(&DataKey::Score(entity_id), &result);
+            .set(&score_key, &result);
+        env.storage()
+            .persistent()
+            .extend_ttl(&score_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
 
         ReputationUpdated {
             entity_id,
@@ -742,12 +782,26 @@ impl ReputationContract {
 
     /// Return the last persisted reputation score for an entity.
     pub fn get_score(env: Env, entity_id: u64) -> Option<ReputationScore> {
-        env.storage().persistent().get(&DataKey::Score(entity_id))
+        let score_key = DataKey::Score(entity_id);
+        let result = env.storage().persistent().get(&score_key);
+        if result.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&score_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
+        }
+        result
     }
 
     /// Return the raw input data for an entity.
     pub fn get_input(env: Env, entity_id: u64) -> Option<ReputationInput> {
-        env.storage().persistent().get(&DataKey::Input(entity_id))
+        let input_key = DataKey::Input(entity_id);
+        let result = env.storage().persistent().get(&input_key);
+        if result.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&input_key, INPUT_TTL_LEDGERS, INPUT_TTL_LEDGERS);
+        }
+        result
     }
 
     // ── Algorithm helpers (pure, no storage) ──────────────────────────────────

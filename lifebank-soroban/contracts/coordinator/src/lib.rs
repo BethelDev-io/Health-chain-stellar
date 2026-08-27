@@ -508,6 +508,26 @@ impl CoordinatorContract {
             return Err(CoordinatorError::InvalidRequestState);
         }
 
+        // Reject empty unit allocations — no units means no delivery guarantee
+        if unit_ids.len() == 0 {
+            return Err(CoordinatorError::NoUnitsSpecified);
+        }
+
+        // Verify payment is actually escrowed for this request
+        let pay_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentContract)
+            .unwrap();
+        let pay_client = PaymentContractClient::new(&env, &pay_addr);
+        let payment = pay_client
+            .try_get_payment(&payment_id)
+            .map_err(|_| CoordinatorError::PaymentNotFound)?
+            .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
+
         // Reserve each inventory unit
         let inv_addr: Address = env
             .storage()
@@ -650,6 +670,10 @@ impl CoordinatorContract {
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
 
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
+
         if payment.status != PaymentStatus::Locked {
             return Err(CoordinatorError::InvalidPaymentState);
         }
@@ -718,6 +742,9 @@ impl CoordinatorContract {
             .try_get_payment(&wf.payment_id)
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
         if payment.status == PaymentStatus::Locked {
             pay_client
                 .try_update_status(&wf.payment_id, &PaymentStatus::Refunded)
@@ -789,6 +816,9 @@ impl CoordinatorContract {
             .try_get_payment(&wf.payment_id)
             .map_err(|_| CoordinatorError::PaymentNotFound)?
             .map_err(|_| CoordinatorError::PaymentNotFound)?;
+        if payment.request_id != request_id {
+            return Err(CoordinatorError::PaymentRequestMismatch);
+        }
         if payment.status == PaymentStatus::Locked {
             pay_client
                 .try_update_status(&wf.payment_id, &PaymentStatus::Refunded)
