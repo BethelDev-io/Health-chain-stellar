@@ -582,8 +582,14 @@ impl ReputationContract {
         Self::calculate_reputation(env, entity_id)
     }
 
-    /// File an appeal for a specific penalty.
-    pub fn appeal_penalty(env: Env, entity_id: u64, penalty_id: u32) -> Result<(), Error> {
+    /// File an appeal for a specific penalty. Caller must be the configured admin.
+    pub fn appeal_penalty(
+        env: Env,
+        caller: Address,
+        entity_id: u64,
+        penalty_id: u32,
+    ) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &caller)?;
         Self::require_not_paused(&env)?;
         let mut input: ReputationInput = env
             .storage()

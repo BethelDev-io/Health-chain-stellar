@@ -817,8 +817,8 @@ fn test_appeals_system() {
 
     c.apply_penalty(&ENTITY, &ViolationType::Medium);
 
-    // Appeal the penalty (ID 0)
-    c.appeal_penalty(&ENTITY, &0);
+    // Appeal the penalty (ID 0) — requires admin signature
+    c.appeal_penalty(&admin, &ENTITY, &0);
 
     let input = c.get_input(&ENTITY).unwrap();
     let p = input.penalties.get(0).unwrap();
@@ -829,6 +829,29 @@ fn test_appeals_system() {
 
     let score = c.get_score(&ENTITY).unwrap();
     assert_eq!(score.penalty_points, 0);
+}
+
+#[test]
+fn test_appeal_penalty_requires_admin_auth() {
+    let (env, cid) = setup();
+    let c = client(&env, &cid);
+    let admin = Address::generate(&env);
+    let unauthorized = Address::generate(&env);
+    c.init(&admin);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    c.submit_rating(&admin, &ENTITY, &5, &1000);
+    c.apply_penalty(&ENTITY, &ViolationType::Medium);
+
+    // Unauthorized address cannot appeal
+    let result = c.try_appeal_penalty(&unauthorized, &ENTITY, &0);
+    assert!(result.is_err());
+
+    // Admin can appeal
+    let result = c.try_appeal_penalty(&admin, &ENTITY, &0);
+    assert!(result.is_ok());
+    let input = c.get_input(&ENTITY).unwrap();
+    assert!(input.penalties.get(0).unwrap().is_appealed);
 }
 
 #[test]
