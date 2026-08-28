@@ -32,6 +32,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { Networks } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 import Redis from 'ioredis';
 import { Repository } from 'typeorm';
 
@@ -636,6 +637,50 @@ export class SorobanService implements OnModuleInit {
   }
 
   // ── Dispute state ──────────────────────────────────────────────────────────
+
+  /**
+   * Verify that a Stellar transaction hash exists, is successful, and
+   * optionally matches the expected memo (Stellar text memo).
+   *
+   * Returns true when the transaction is confirmed on-chain.
+   * Returns false when the hash is not found, the transaction failed,
+   * or the memo does not match (if expectedMemo is provided).
+   *
+   * Uses the Horizon REST API so no contract SDK is required.
+   */
+  async verifyPaymentTransaction(
+    transactionHash: string,
+    expectedMemo?: string,
+  ): Promise<boolean> {
+    const network = this.configService.get<string>('SOROBAN_NETWORK', 'testnet');
+    const horizonUrl =
+      network === 'mainnet'
+        ? 'https://horizon.stellar.org'
+        : 'https://horizon-testnet.stellar.org';
+
+    try {
+      const server = new Horizon.Server(horizonUrl);
+      const tx = await server.transactions().transaction(transactionHash).call();
+      if (!tx.successful) {
+        this.logger.warn(`Transaction ${transactionHash} exists but was not successful`);
+        return false;
+      }
+      if (expectedMemo !== undefined) {
+        if (tx.memo_type !== 'text' || tx.memo !== expectedMemo) {
+          this.logger.warn(
+            `Transaction ${transactionHash} memo mismatch: expected "${expectedMemo}", got "${tx.memo}"`,
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Could not verify transaction ${transactionHash}: ${(error as Error).message}`,
+      );
+      return false;
+    }
+  }
 
   async getDisputeState(
     contractDisputeId: string,
