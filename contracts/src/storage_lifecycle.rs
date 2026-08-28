@@ -236,6 +236,8 @@ pub fn bump_all_registries(env: &Env) {
         CUSTODY_EVENTS,
         PAYMENT_STATS,
         PENDING_APPROVALS,
+        ESCROW_ACCOUNTS,
+        MULTISIG_CONFIG,
     ] {
         env.storage()
             .persistent()
