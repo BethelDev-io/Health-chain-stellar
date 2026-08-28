@@ -1942,6 +1942,29 @@ impl HealthChainContract {
         // Maintain status index
         reindex_status(&env, unit_id, old_status, new_status);
 
+        // Fix #1323: when releasing a unit that was previously Reserved or
+        // InTransit (i.e. it had a hospital allocation when quarantine_blood was
+        // called), clear the stale allocation fields and remove the unit from the
+        // HospitalUnits index.  Without this, query_by_hospital would return a
+        // phantom allocation for the original hospital forever, and after a second
+        // allocation the unit would appear under two hospitals simultaneously.
+        // This mirrors the cleanup already done in cancel_allocation.
+        if new_status == BloodStatus::Available {
+            let stale_hospital = unit.recipient_hospital.clone();
+            if stale_hospital.is_some() {
+                // Reload the unit from the map so we can clear its fields.
+                let mut cleared = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+                cleared.recipient_hospital = None;
+                cleared.allocation_timestamp = None;
+                units.set(unit_id, cleared);
+                env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+                if let Some(ref hosp) = stale_hospital {
+                    deindex_hospital_unit(&env, hosp, unit_id);
+                }
+            }
+        }
+
         record_status_change(&env, unit_id, old_status, new_status, caller.clone());
 
         let quarantine_event = QuarantineLifecycleEvent {

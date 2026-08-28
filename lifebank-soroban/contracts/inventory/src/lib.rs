@@ -406,6 +406,79 @@ impl InventoryContract {
         storage::get_blood_unit(&env, blood_unit_id).ok_or(ContractError::NotFound)
     }
 
+    /// Return all blood unit IDs indexed under `blood_type`, across all index pages.
+    ///
+    /// Fixes #1318: the matching contract's `InventoryContractInterface` declares
+    /// this function but it was never exposed as a public entrypoint, causing every
+    /// cross-contract call from the matching contract to fail silently and return
+    /// zero candidates.
+    ///
+    /// Iterates the paginated `BloodTypeIndex` written by `add_to_blood_type_index`
+    /// and concatenates every page into a single flat `Vec<u64>`.  Callers that need
+    /// only a window of results should use `get_units_by_blood_type_page`.
+    ///
+    /// # Arguments
+    /// * `env`        - Contract environment
+    /// * `blood_type` - The blood type whose index to read
+    ///
+    /// # Returns
+    /// Flat list of blood unit IDs registered under `blood_type`.
+    pub fn get_units_by_blood_type(env: Env, blood_type: BloodType) -> Vec<u64> {
+        let meta_key = DataKey::BloodTypeIndexMeta(blood_type);
+        let last_page: u32 = env
+            .storage()
+            .persistent()
+            .get(&meta_key)
+            .unwrap_or(0u32);
+
+        let mut all: Vec<u64> = Vec::new(&env);
+        for p in 0..=last_page {
+            let page_key = DataKey::BloodTypeIndexPage(blood_type, p);
+            let page: Vec<u64> = env
+                .storage()
+                .persistent()
+                .get(&page_key)
+                .unwrap_or(Vec::new(&env));
+            for i in 0..page.len() {
+                all.push_back(page.get(i).unwrap());
+            }
+        }
+        all
+    }
+
+    /// Return one page of blood unit IDs for `blood_type`.
+    ///
+    /// Pair with `get_blood_type_page_count` to iterate large indexes without
+    /// loading all pages in a single call.
+    ///
+    /// # Arguments
+    /// * `env`        - Contract environment
+    /// * `blood_type` - The blood type whose index to read
+    /// * `page`       - Zero-based page number
+    ///
+    /// # Returns
+    /// Up to `INDEX_PAGE_SIZE` blood unit IDs for the given page, or an empty
+    /// `Vec` if the page does not exist.
+    pub fn get_units_by_blood_type_page(env: Env, blood_type: BloodType, page: u32) -> Vec<u64> {
+        let page_key = DataKey::BloodTypeIndexPage(blood_type, page);
+        env.storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Return the last (highest) page number currently written for `blood_type`.
+    ///
+    /// The total number of pages is `get_blood_type_page_count + 1` (pages are
+    /// zero-based).
+    pub fn get_blood_type_page_count(env: Env, blood_type: BloodType) -> u32 {
+        let meta_key = DataKey::BloodTypeIndexMeta(blood_type);
+        env.storage()
+            .persistent()
+            .get(&meta_key)
+            .unwrap_or(0u32)
+    }
+
     pub fn update_status(
         env: Env,
         unit_id: u64,

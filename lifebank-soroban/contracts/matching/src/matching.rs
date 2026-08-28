@@ -106,14 +106,21 @@ pub fn is_compatible(donor: BloodType, recipient: BloodType) -> bool {
 /// | Exact blood type   |  40     | Preserve rare compatible stock         |
 /// | Expiration urgency |  30     | FIFO — use oldest first                |
 /// | Request urgency    |  20     | Critical requests get better units     |
-/// | Proximity tier     |  10     | Same bank_id = 0 km proxy              |
 ///
 /// Higher score = better candidate.
+///
+/// Note: A "proximity tier" (+10 for same bank) was previously documented here
+/// but removed in fix #1322.  `unit.bank_id` (the blood bank's address) was
+/// compared against `request.hospital_id` (the requesting hospital's address) —
+/// two different principal types that are never equal in practice — so the bonus
+/// was dead code that silently degraded match quality without any error.  The
+/// field will be reintroduced once `BloodRequest` carries an explicit
+/// `preferred_bank_id` field populated by the requests contract.
 pub fn score_unit(
     unit: &BloodUnit,
     request_blood_type: BloodType,
     request_urgency: Urgency,
-    request_bank_id_hint: Option<&soroban_sdk::Address>,
+    _request_bank_id_hint: Option<&soroban_sdk::Address>,
     now_timestamp: u64,
 ) -> u32 {
     let mut score: u32 = 0;
@@ -136,13 +143,6 @@ pub fn score_unit(
 
     // 3. Request urgency weight
     score += request_urgency.priority() * 5; // 5, 10, 15, or 20
-
-    // 4. Proximity — same bank as the requesting hospital hint
-    if let Some(hint) = request_bank_id_hint {
-        if &unit.bank_id == hint {
-            score += 10;
-        }
-    }
 
     score
 }
