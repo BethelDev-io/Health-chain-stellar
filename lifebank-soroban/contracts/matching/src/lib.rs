@@ -281,14 +281,27 @@ impl MatchingContract {
             .unwrap();
         let req_client = RequestsContractClient::new(&env, &req_addr);
 
-        // Load all requests in one pass
+        // Load all requests in one pass, skipping any that cannot be loaded
+        // or are no longer Pending rather than aborting the whole batch
+        // (issue #1321). A single stale or missing request ID must not
+        // discard results for every other valid request in the batch.
         let mut requests: Vec<BloodRequest> = Vec::new(&env);
         for i in 0..request_ids.len() {
             let rid = request_ids.get(i).unwrap();
-            let req = req_client
+            // Skip requests that don't exist or can't be loaded.
+            let req = match req_client
                 .try_get_request(&rid)
-                .map_err(|_| MatchingError::RequestNotFound)?
-                .map_err(|_| MatchingError::RequestNotFound)?;
+                .ok()
+                .and_then(|r| r.ok())
+            {
+                Some(r) => r,
+                None => continue,
+            };
+            // Skip requests that are no longer Pending (e.g. cancelled or
+            // approved concurrently between submission and execution).
+            if req.status != RequestStatus::Pending {
+                continue;
+            }
             requests.push_back(req);
         }
 
@@ -324,7 +337,13 @@ impl MatchingContract {
         let mut results: Vec<MatchResult> = Vec::new(&env);
         for i in 0..requests.len() {
             let req = requests.get(i).unwrap();
-            let result = Self::match_request_excluding(&env, req.id, &assigned)?;
+            // Skip individual requests that fail to match (e.g. the request
+            // transitioned away from Pending between the load pass above and
+            // this execution pass) instead of aborting the entire batch.
+            let result = match Self::match_request_excluding(&env, req.id, &assigned) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for j in 0..result.matched_units.len() {
                 assigned.push_back(result.matched_units.get(j).unwrap().unit_id);
             }
