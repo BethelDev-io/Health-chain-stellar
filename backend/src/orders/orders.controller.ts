@@ -25,6 +25,8 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
+import { RaiseDisputeDto } from './dto/raise-dispute.dto';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { OrdersService } from './orders.service';
 import { OrderStateAuditService } from './services/order-state-audit.service';
 import { Order } from './types/order.types';
@@ -264,7 +266,7 @@ export class OrdersController {
   raiseDispute(
     @Param('id') id: string,
 
-    @Body() dto: any,
+    @Body() dto: RaiseDisputeDto,
     @Request() req: AuthenticatedRequest,
   ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
@@ -285,7 +287,7 @@ export class OrdersController {
   resolveDispute(
     @Param('id') id: string,
 
-    @Body() dto: any,
+    @Body() dto: ResolveDisputeDto,
     @Request() req: AuthenticatedRequest,
   ) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
