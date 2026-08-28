@@ -2689,7 +2689,11 @@ impl HealthChainContract {
             amount: net_amount,
             asset,
             fee_structure: fee_payload,
-            status: PaymentStatus::Pending,
+            // Escrow is created atomically with the payment, so transition
+            // directly to Escrowed — there is no separate fund_escrow entry
+            // point, and leaving status as Pending would permanently block
+            // propose_release and raise_dispute (fixes #1324).
+            status: PaymentStatus::Escrowed,
             escrow_released_at: None,
         };
 
@@ -2863,7 +2867,12 @@ impl HealthChainContract {
             .get(&PENDING_APPROVALS)
             .unwrap_or(Map::new(&env));
 
-        if payment.amount < HIGH_VALUE_THRESHOLD {
+        // Gate the multisig threshold on the gross escrowed amount, not the
+        // post-fee net payment.amount. A caller could otherwise craft a fee
+        // structure that keeps payment.amount just under HIGH_VALUE_THRESHOLD
+        // while locking a far larger gross amount, bypassing M-of-N control
+        // (fixes #1325).
+        if escrow.locked_amount < HIGH_VALUE_THRESHOLD {
             let admin: Address = env
                 .storage()
                 .instance()
@@ -3144,6 +3153,13 @@ impl HealthChainContract {
             .persistent()
             .get(&PAYMENTS)
             .unwrap_or(Map::new(&env));
+        // Load escrow accounts so we can use locked_amount for refund stats
+        // rather than the post-fee payment.amount (fixes #1326).
+        let escrow_accounts: Map<u64, EscrowAccount> = env
+            .storage()
+            .persistent()
+            .get(&ESCROW_ACCOUNTS)
+            .unwrap_or(Map::new(&env));
         let mut stats = Self::get_payment_stats(env.clone());
         let mut processed = 0u32;
 
@@ -3171,6 +3187,13 @@ impl HealthChainContract {
                 continue;
             }
 
+            // Use the gross escrowed amount for the refund; fall back to
+            // payment.amount only if the escrow record is missing.
+            let refund_amount = escrow_accounts
+                .get(payment.id)
+                .map(|e| e.locked_amount)
+                .unwrap_or(payment.amount);
+
             payment.status = PaymentStatus::Refunded;
             payment.escrow_released_at = Some(current_time);
             payments.set(dispute.payment_id, payment.clone());
@@ -3180,7 +3203,7 @@ impl HealthChainContract {
             disputes.set(dispute_id, dispute.clone());
 
             stats.count_auto_refunded += 1;
-            stats.total_auto_refunded += payment.amount;
+            stats.total_auto_refunded += refund_amount;
             processed += 1;
 
             env.events().publish(
@@ -3193,7 +3216,7 @@ impl HealthChainContract {
                     case_id: dispute_id,
                     payment_id: payment.id,
                     refunded_to: payment.payer,
-                    amount: payment.amount,
+                    amount: refund_amount,
                     refunded_at: current_time,
                 },
             );
@@ -3230,8 +3253,27 @@ impl HealthChainContract {
         let old_status = request.status;
         request.status = new_status;
 
-        requests.set(request_id, request);
+        requests.set(request_id, request.clone());
         env.storage().persistent().set(&REQUESTS, &requests);
+
+        // Clear the dedup index when a request reaches a terminal non-fulfilled
+        // state so the hospital can re-submit the same parameters (fixes #1327).
+        if new_status == RequestStatus::Rejected || new_status == RequestStatus::Cancelled {
+            let status_key = RequestKey {
+                hospital_id: request.hospital_id.clone(),
+                blood_type: request.blood_type,
+                quantity_ml: request.quantity_ml,
+                urgency: request.urgency,
+                required_by: request.required_by,
+            };
+            let mut request_keys: Map<RequestKey, u64> = env
+                .storage()
+                .persistent()
+                .get(&REQUEST_KEYS)
+                .unwrap_or(Map::new(&env));
+            request_keys.remove(status_key);
+            env.storage().persistent().set(&REQUEST_KEYS, &request_keys);
+        }
 
         // Record and emit status change
         record_request_status_change(&env, request_id, old_status, new_status, caller, None);
@@ -3434,6 +3476,23 @@ impl HealthChainContract {
 
         let current_time = env.ledger().timestamp();
 
+        // Remove the dedup index entry so the hospital can re-submit an
+        // identical request after cancellation (fixes #1327).
+        let cancel_key = RequestKey {
+            hospital_id: request.hospital_id.clone(),
+            blood_type: request.blood_type,
+            quantity_ml: request.quantity_ml,
+            urgency: request.urgency,
+            required_by: request.required_by,
+        };
+        let mut request_keys: Map<RequestKey, u64> = env
+            .storage()
+            .persistent()
+            .get(&REQUEST_KEYS)
+            .unwrap_or(Map::new(&env));
+        request_keys.remove(cancel_key);
+        env.storage().persistent().set(&REQUEST_KEYS, &request_keys);
+
         // Record and emit status change (for backward compatibility)
         record_request_status_change(
             &env,
@@ -3570,6 +3629,25 @@ impl HealthChainContract {
 
         requests.set(request_id, request.clone());
         env.storage().persistent().set(&REQUESTS, &requests);
+
+        // Clear the dedup index on fulfillment so the same request parameters
+        // can be re-submitted in future if needed (fixes #1327).
+        if request.status == RequestStatus::Fulfilled {
+            let fulfill_key = RequestKey {
+                hospital_id: request.hospital_id.clone(),
+                blood_type: request.blood_type,
+                quantity_ml: request.quantity_ml,
+                urgency: request.urgency,
+                required_by: request.required_by,
+            };
+            let mut request_keys: Map<RequestKey, u64> = env
+                .storage()
+                .persistent()
+                .get(&REQUEST_KEYS)
+                .unwrap_or(Map::new(&env));
+            request_keys.remove(fulfill_key);
+            env.storage().persistent().set(&REQUEST_KEYS, &request_keys);
+        }
 
         if old_status != request.status {
             record_request_status_change(
